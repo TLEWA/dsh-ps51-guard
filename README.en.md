@@ -9,7 +9,7 @@ DSH's `ops_bash` runs commands in bash, while `powershell`/`powershell.exe` on W
 1. In the DSH process the plugin points `BASH_ENV` at its own `bash-env.sh` and chains any previous `BASH_ENV`, so other plugins keep working.
 2. The shim reads the original `$BASH_COMMAND` from bash's `DEBUG` trap (before expansion) and only takes over when the command word finally is 5.1; it also exports the list of bash variable names so `$name` ownership can be decided.
 3. `lib/client.js` parses the original text, restores values bash expanded from argv, applies the rewrite rules, and hands the command to the resident host.
-4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** with a normalized exit code. If the host is unavailable or fails internally, the original call is used instead (fail-open, never executed twice).
+4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** with a normalized exit code. If the host is unavailable while connecting, the original call is used instead; a host failure after the request was sent exits with code 125 and never replays the command, so nothing runs twice.
 
 ## Ownership
 
@@ -52,6 +52,7 @@ Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\diagnostics.log` (JSON lines wit
 - Scripts containing the `exit` keyword run in a one-shot process (about 0.3–0.5 s) because a runspace cannot report `exit` codes.
 - Every command starts one `node` client; with the warmed host this averages about 100 ms per command in one bash session, still above a bare hot 5.1 run.
 - When a bash variable and a PowerShell variable with the same name appear together, the argv-expanded value is used and the result is marked `mixed-variables`; that may differ from the model's intent.
+- If the host crashes or disconnects after the request was sent, the client exits with code 125 without replaying the command; only a connection failure before the request falls back to the original call.
 
 ## Development
 

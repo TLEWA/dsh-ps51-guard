@@ -80,9 +80,18 @@ test('R6 maps bash ls flags', () => {
 	assert.equal(rewritePayload('ls -Z').payload, 'ls -Z');
 });
 
-test('R6 maps bash rm flags', () => {
+test('R6 maps bash rm flags without widening the delete', () => {
 	assert.equal(rewritePayload('rm -rf C:/x').payload, 'Remove-Item -Recurse -Force C:/x');
-	assert.equal(rewritePayload('rm -r C:/x').payload, 'Remove-Item -Recurse -Force C:/x');
+	assert.equal(rewritePayload('rm -r C:/x').payload, 'Remove-Item -Recurse C:/x');
+	assert.equal(rewritePayload('rm -f C:/x').payload, 'Remove-Item -Force C:/x');
+	assert.equal(rewritePayload('rm -x C:/x').payload, 'rm -x C:/x');
+});
+
+test('rules leave string literals and comments alone', () => {
+	assert.equal(rewritePayload("Set-Content data.txt 'curl example.com'").payload, "Set-Content data.txt 'curl example.com'");
+	assert.equal(rewritePayload('Write-Output "2>/dev/null"').payload, 'Write-Output "2>/dev/null"');
+	assert.equal(rewritePayload('# curl a && b').payload, '# curl a && b');
+	assert.equal(rewritePayload('Write-Output x 2>/dev/null').payload, 'Write-Output x 2>$null');
 });
 
 test('R7 only explains utf8NoBOM', () => {

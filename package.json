@@ -56,8 +56,8 @@
     }
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/lexer.js && node --check lib/rules.js && node --check lib/frames.js && node --check lib/resolver.js && node --check lib/shim.js && node --check lib/host-control.js && node --check test/smoke.test.mjs && node --check test/rules.test.mjs && node --check test/corpus.test.mjs && node --check test/host.test.mjs",
-    "test": "node test/smoke.test.mjs && node test/rules.test.mjs && node test/corpus.test.mjs && node test/host.test.mjs",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/lexer.js && node --check lib/rules.js && node --check lib/frames.js && node --check lib/resolver.js && node --check lib/shim.js && node --check lib/host-control.js && node --check test/smoke.test.mjs && node --check test/rules.test.mjs && node --check test/corpus.test.mjs && node --check test/host.test.mjs && node --check test/ownership.test.mjs && node --check test/no-replay.test.mjs",
+    "test": "node test/smoke.test.mjs && node test/rules.test.mjs && node test/corpus.test.mjs && node test/host.test.mjs && node test/ownership.test.mjs && node test/no-replay.test.mjs",
     "prepublishOnly": "npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate --prepublish"
   }
 }

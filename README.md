@@ -9,7 +9,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖。
 2. shim 用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 时接管；同时导出 bash 变量名清单，供判断 `$name` 归属。
 3. `lib/client.js` 解析原文、按 argv 恢复被 bash 展开的值、套用改写规则，然后把命令交给常驻宿主。
-4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令，stdout/stderr 以**原始字节**回传，退出码归一化。宿主不可用或内部出错时回退到原始调用（fail-open，不会重复执行）。
+4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令，stdout/stderr 以**原始字节**回传，退出码归一化。连接阶段宿主不可用时回退到原始调用；请求已经发出后的宿主故障只报错退出（退出码 125）而不重放，任何情况下都不会执行两次。
 
 ## 接管范围
 
@@ -52,6 +52,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - 含 `exit` 关键字的脚本走一次性进程（约 0.3–0.5 秒），因为 runspace 拿不到 `exit` 的退出码。
 - 每条命令要启动一次 `node` 客户端；宿主复用后同会话均摊约 100 毫秒/条，仍高于裸 5.1 的热执行。
 - bash 与 PowerShell 同名变量同时出现时按 argv 已展开值处理，并标记 `mixed-variables`，可能不是模型的本意。
+- 请求已交给宿主后若宿主崩溃或断开，客户端以 125 退出且不重放命令；只有尚未发出请求的连接失败才会回退到原命令。
 
 ## 开发
 
