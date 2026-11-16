@@ -184,6 +184,14 @@ test('lexer keeps PowerShell variables literal when other shell names exist', ()
 	assert.equal(expanded.text, 'Write-Output $env:TEMP');
 });
 
+test('lexer reports the argv offset of the payload', () => {
+	const invocation = classifyInvocation(lexCommand('powershell.exe -NoProfile -Command "Write-Output hi"').tokens);
+	assert.equal(invocation.payloadPrefixArgs, 2);
+	assert.equal(invocation.payloadTokens.length, 1);
+	const short = classifyInvocation(lexCommand('powershell.exe -c "Get-Date"').tokens);
+	assert.equal(short.payloadPrefixArgs, 1);
+});
+
 test('lexer recognises -File and -EncodedCommand modes', () => {
 	const file = classifyInvocation(lexCommand('powershell.exe -File build.ps1').tokens);
 	assert.equal(file.kind, 'file');

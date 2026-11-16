@@ -126,6 +126,9 @@ function send(request, timeoutMs) {
 
 const runtime = createRuntime();
 const latencies = [];
+// Present in the host baseline so the complete-snapshot test can prove that a
+// variable the caller removed is actually removed inside the host.
+process.env.DSH_PS51_ENV_PROBE = 'baseline';
 
 try {
 	startHost();
@@ -149,6 +152,45 @@ try {
 		const failed = await send({ id: 'err-1', op: 'exec', script: "Write-Error boom" }, 10000);
 		assert.equal(failed.code, 1);
 		assert.match(failed.err, /boom/);
+	});
+
+	await test('keeps console output byte for byte', async () => {
+		const wrote = await send({ id: 'console-1', op: 'exec', script: '[Console]::Out.Write("a`n`nb")' }, 10000);
+		assert.equal(wrote.code, 0);
+		assert.equal(wrote.out, 'a\n\nb');
+	});
+
+	await test('derives the exit code from the final command status', async () => {
+		const failed = await send({ id: 'native-1', op: 'exec', script: 'cmd /c exit 5' }, 10000);
+		assert.equal(failed.code, 1);
+		const recovered = await send({ id: 'native-2', op: 'exec', script: 'cmd /c exit 3; Write-Output done' }, 10000);
+		assert.equal(recovered.code, 0);
+		assert.match(recovered.out, /done/);
+	});
+
+	await test('feeds request stdin to [Console]::In', async () => {
+		const piped = await send(
+			{
+				id: 'stdin-1',
+				op: 'exec',
+				script: '[Console]::In.ReadToEnd()',
+				stdinB64: Buffer.from('pipe-data').toString('base64'),
+			},
+			10000
+		);
+		assert.equal(piped.code, 0);
+		assert.match(piped.out, /pipe-data/);
+	});
+
+	await test('removes environment variables the request no longer has', async () => {
+		const snapshot = { ...process.env };
+		delete snapshot.DSH_PS51_ENV_PROBE;
+		const cleared = await send(
+			{ id: 'env-1', op: 'exec', script: 'Write-Output ("[" + $env:DSH_PS51_ENV_PROBE + "]")', env: snapshot },
+			10000
+		);
+		assert.equal(cleared.code, 0);
+		assert.match(cleared.out, /\[\]/);
 	});
 
 	await test('survives an unexpected host exit and restarts', async () => {

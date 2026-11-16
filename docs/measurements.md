@@ -46,7 +46,7 @@ TRAP_RAW trap - DEBUG
 | 护栏首次调用（bash + node 客户端 + 冷启动宿主） | 约 330 ms |
 | 护栏热调用（宿主已就绪，单条命令） | 约 155–165 ms |
 | 护栏热调用（同一 bash 会话内 10 条命令均摊） | 约 99–143 ms |
-| 宿主内单次 exec（Node 直连管道，200 次，含每请求 runspace 重置与控制台捕获） | p50 约 22.6 ms，p95 约 26.8 ms，max 约 89 ms |
+| 宿主内单次 exec（Node 直连管道，200 次，含每请求 runspace 重置、控制台捕获与 stdin 注入） | p50 约 21.7–23.7 ms，p95 约 26.1–28.9 ms，max 约 90.7–99.5 ms |
 
 解读：
 - 热路径的固定成本主要是「每条命令一次 `node client.js` 启动 + 一次 bash 启动」；路线图 M2 的 p50 < 120 ms 已达成（按同会话均摊口径）。
@@ -56,11 +56,12 @@ TRAP_RAW trap - DEBUG
 ## 退出码语义 / Exit codes
 
 实测 5.1 的 `-Command` 退出码：`exit 7` → 7；`Write-Error x` → 1；`throw x` → 1；`cmd /c exit 5` → 1；`cmd /c exit 3; echo done` → 0。
-宿主内 runspace 无法拿到 `exit` 的退出码（`EndInvoke` 正常返回、`LASTEXITCODE` 仍为 0），因此含 `exit` 关键字的脚本走一次性 spawn；其余脚本按 `$?` 映射 0/1，与 `-Command` 语义一致。
+宿主内 runspace 无法拿到 `exit` 的退出码（`EndInvoke` 正常返回、`LASTEXITCODE` 仍为 0），因此含 `exit` 关键字的脚本走一次性 spawn；其余脚本在用户脚本后追加一行 `$global:__ps51ExitOk = $?`，执行后从 `SessionStateProxy` 读回，映射 0/1，与 `-Command` 的最终 `$?` 语义一致（`cmd /c exit 5` → 1，`cmd /c exit 3; Write-Output done` → 0）。
 
 ## 输出编码 / Output encoding
 
 5.1 的 stdout 重定向到文件时已经是 UTF-8（`Write-Output`、`cmd /c echo`、`[Console]::Out.WriteLine` 均无 BOM），所以宿主走**字节透传**，不重设编码，避免二次转码破坏中文。
+`[Console]::Out/Error` 在宿主内被临时重定向到 `StringWriter` 捕获，再以**原始文本**单独发一帧（不再按行拆分或补 CRLF），因此 `[Console]::Out.Write("a`n`nb")` 的空行与换行形态保持不变；它与 pipeline 输出的相对顺序是近似的（console 文本先发）。
 
 ## 复测方式 / How to re-measure
 

@@ -117,7 +117,7 @@ function Reset-Runner {
 	}
 }
 
-function Invoke-Payload([string]$Script, [string]$Cwd) {
+function Invoke-Payload([string]$Script, [string]$Cwd, [string]$StdinText) {
 	Reset-Runner
 	$Runner.Commands.Clear()
 	[void]$Runner.Streams.ClearStreams()
@@ -125,7 +125,10 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 	if ($Cwd) {
 		$prelude = 'Set-Location -LiteralPath ' + (ConvertTo-PsLiteral $Cwd) + '; '
 	}
-	[void]$Runner.AddScript($prelude + $Script)
+	# The trailing statement records the final execution status of the user
+	# script; -Command uses the same $? value for the process exit code.
+	$sentinel = [Environment]::NewLine + '$global:__ps51ExitOk = $?'
+	[void]$Runner.AddScript($prelude + $Script + $sentinel)
 
 	# [Console]::Out/Error bypass the PowerShell streams, so redirect them
 	# while the script runs and forward the captured text in the outcome.
@@ -133,8 +136,10 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 	$capturedErr = New-Object System.IO.StringWriter
 	$savedOut = [Console]::Out
 	$savedErr = [Console]::Error
+	$savedIn = [Console]::In
 	[Console]::SetOut($capturedOut)
 	[Console]::SetError($capturedErr)
+	[Console]::SetIn((New-Object System.IO.StringReader -ArgumentList ([string]$StdinText)))
 
 	$result = $null
 	$parseError = $null
@@ -149,6 +154,7 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 		try {
 			[Console]::SetOut($savedOut)
 			[Console]::SetError($savedErr)
+			[Console]::SetIn($savedIn)
 		} catch {
 		}
 	}
@@ -165,27 +171,28 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 			$outLines += [string]$data
 		}
 	}
-	foreach ($line in ($capturedOut.ToString() -split "\r?\n")) {
-		if ($line -ne '') { $outLines += $line }
-	}
-
 	$errLines = @()
 	foreach ($record in $Runner.Streams.Error) {
 		# ToString keeps the message only; Out-String would echo the prelude line.
 		$errLines += ([string]$record).TrimEnd()
 	}
-	foreach ($line in ($capturedErr.ToString() -split "\r?\n")) {
-		if ($line -ne '') { $errLines += $line }
-	}
 	if ($parseError) { $errLines += $parseError }
 
+	$exitOk = $true
+	try {
+		$state = $Runner.Runspace.SessionStateProxy.GetVariable('__ps51ExitOk')
+		if ($state -is [bool]) { $exitOk = [bool]$state }
+	} catch {
+		$exitOk = -not $Runner.HadErrors
+	}
 	$code = 0
-	if ($parseError) { $code = 1 }
-	elseif ($Runner.HadErrors) { $code = 1 }
+	if ($parseError -or -not $exitOk) { $code = 1 }
 
 	return @{
 		out = $outLines
 		err = $errLines
+		outRaw = $capturedOut.ToString()
+		errRaw = $capturedErr.ToString()
 		code = $code
 		parseError = $parseError
 	}
@@ -219,19 +226,47 @@ function Serve-Connection([System.IO.Stream]$Stream) {
 		}
 
 		$started = [DateTime]::UtcNow
+		$stdinText = ''
+		if ($request.stdinB64) {
+			try {
+				$stdinText = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.stdinB64))
+			} catch {
+				$stdinText = ''
+			}
+		}
+
 		$envDiff = $request.env
 		if ($null -ne $envDiff) {
+			# The request carries a complete environment snapshot: a key the
+			# caller removed must be removed here too instead of being merged
+			# over the host baseline.
+			$wanted = @{}
 			foreach ($property in $envDiff.PSObject.Properties) {
+				$name = [string]$property.Name
+				# Drive-current-directory entries are not real variables and
+				# cannot be set through this API.
+				if ($name.StartsWith('=')) { continue }
 				if ($null -eq $property.Value) {
-					[Environment]::SetEnvironmentVariable($property.Name, $null)
-				} else {
-					[Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value)
+					[Environment]::SetEnvironmentVariable($name, $null)
+					continue
+				}
+				$wanted[$name.ToLowerInvariant()] = $true
+				[Environment]::SetEnvironmentVariable($name, [string]$property.Value)
+			}
+			foreach ($name in [Environment]::GetEnvironmentVariables().Keys) {
+				$name = [string]$name
+				# The host keeps its own control variables across calls, and
+				# drive-current-directory entries are not settable variables.
+				if ($name -like 'PS51_*') { continue }
+				if ($name.StartsWith('=')) { continue }
+				if (-not $wanted.ContainsKey($name.ToLowerInvariant())) {
+					try { [Environment]::SetEnvironmentVariable($name, $null) } catch { }
 				}
 			}
 		}
 
 		try {
-			$outcome = Invoke-Payload ([string]$request.script) ([string]$request.cwd)
+			$outcome = Invoke-Payload ([string]$request.script) ([string]$request.cwd) $stdinText
 		} finally {
 			Restore-BaselineEnv
 		}
@@ -240,6 +275,15 @@ function Serve-Connection([System.IO.Stream]$Stream) {
 		if ($env:PS51_TRACE -eq '1') {
 			Write-Trace ('exec script=[' + [string]$request.script + '] code=' + $outcome.code)
 			foreach ($line in $outcome.err) { Write-Trace ('err: ' + $line) }
+		}
+		# Console text is forwarded byte for byte; the line frames below carry
+		# the formatted pipeline output, which the host terminates with CRLF.
+		# ConvertTo-Base64 takes text and encodes it as UTF-8 itself.
+		if ($outcome.outRaw) {
+			Write-Frame $Stream @{ id = $id; type = 'out'; dataB64 = (ConvertTo-Base64 ([string]$outcome.outRaw)) }
+		}
+		if ($outcome.errRaw) {
+			Write-Frame $Stream @{ id = $id; type = 'err'; dataB64 = (ConvertTo-Base64 ([string]$outcome.errRaw)) }
 		}
 		Send-Text $Stream $id 'out' $outcome.out
 		Send-Text $Stream $id 'err' $outcome.err

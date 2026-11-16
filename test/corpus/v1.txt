@@ -211,3 +211,40 @@ out-contains: seeded
 command: powershell.exe -NoProfile -Command 'if (Test-Path variable:x) { "leaked-var" } elseif (Test-Path function:leakfn) { "leaked-fn" } elseif ($ErrorActionPreference -ne "Continue") { "leaked-pref" } else { "clean" }'
 status: 0
 out-equals: clean
+
+---
+
+# native-exit-code: a native child's non-zero status becomes exit code 1.
+command: powershell.exe -NoProfile -Command "cmd /c exit 5"
+status: 1
+
+---
+
+# native-exit-recovered: a later successful command restores exit code 0.
+command: powershell.exe -NoProfile -Command "cmd /c exit 3; Write-Output done"
+status: 0
+out-contains: done
+
+---
+
+# stdin-forward: pipeline input reaches [Console]::In in the host.
+command: printf 'pipe-data' | powershell.exe -NoProfile -Command '[Console]::In.ReadToEnd()'
+status: 0
+out-contains: pipe-data
+
+---
+
+# env-unset: an unset variable disappears from the host environment too.
+command: unset TEMP; powershell.exe -NoProfile -Command 'Write-Output ("[" + $env:TEMP + "]")'
+status: 0
+out-equals: []
+
+---
+
+# glob-argv: a glob that expands into several argv entries falls back instead
+# of rebuilding a truncated payload.
+command: touch {{TMP}}/a.txt {{TMP}}/b.txt; powershell.exe -NoProfile -Command Write-Output {{TMP}}/*.txt
+status: 0
+out-contains: a.txt
+out-contains: b.txt
+err-not-contains: [ps51]
