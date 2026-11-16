@@ -74,6 +74,11 @@ test('R5 nests Join-Path with three or more paths', () => {
 	assert.equal(rewritePayload('Join-Path a b c d').payload, 'Join-Path (Join-Path (Join-Path a b) c) d');
 });
 
+test('R5 leaves named parameters and parenthesized calls alone', () => {
+	assert.equal(rewritePayload('Join-Path -Path C:/ -ChildPath foo').payload, 'Join-Path -Path C:/ -ChildPath foo');
+	assert.equal(rewritePayload('Join-Path (Get-Location) a b').payload, 'Join-Path (Get-Location) a b');
+});
+
 test('R6 maps bash ls flags', () => {
 	assert.equal(rewritePayload('ls -la').payload, 'Get-ChildItem -Force');
 	assert.equal(rewritePayload('ls -l').payload, 'Get-ChildItem -Force');

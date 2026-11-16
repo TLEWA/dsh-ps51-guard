@@ -44,7 +44,7 @@ Whenever a rewrite happens, `[ps51] A → B` is printed to stderr so the model k
 | `PS51_VERBOSE` | `0` | Set to `1` to print every hint, including low-priority notes such as R8 |
 | `PS51_DIAGNOSTICS` | `1` | Set to `0` to stop writing the diagnostics log |
 
-Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
+Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
 
 ## Known limitations
 

@@ -106,7 +106,19 @@ function Restore-BaselineEnv {
 
 $Runner = [powershell]::Create()
 
+# Every request starts from a clean session state: variables, functions and
+# preference changes made by one command must not leak into the next one.
+function Reset-Runner {
+	try {
+		$Runner.Runspace.ResetRunspaceState()
+	} catch {
+		try { $Runner.Dispose() } catch { }
+		$script:Runner = [powershell]::Create()
+	}
+}
+
 function Invoke-Payload([string]$Script, [string]$Cwd) {
+	Reset-Runner
 	$Runner.Commands.Clear()
 	[void]$Runner.Streams.ClearStreams()
 	$prelude = ''
@@ -114,6 +126,15 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 		$prelude = 'Set-Location -LiteralPath ' + (ConvertTo-PsLiteral $Cwd) + '; '
 	}
 	[void]$Runner.AddScript($prelude + $Script)
+
+	# [Console]::Out/Error bypass the PowerShell streams, so redirect them
+	# while the script runs and forward the captured text in the outcome.
+	$capturedOut = New-Object System.IO.StringWriter
+	$capturedErr = New-Object System.IO.StringWriter
+	$savedOut = [Console]::Out
+	$savedErr = [Console]::Error
+	[Console]::SetOut($capturedOut)
+	[Console]::SetError($capturedErr)
 
 	$result = $null
 	$parseError = $null
@@ -124,6 +145,12 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 		$inner = $_.Exception.InnerException
 		if ($null -ne $inner) { $message = $inner.Message }
 		$parseError = $message
+	} finally {
+		try {
+			[Console]::SetOut($savedOut)
+			[Console]::SetError($savedErr)
+		} catch {
+		}
 	}
 
 	$outLines = @()
@@ -138,11 +165,17 @@ function Invoke-Payload([string]$Script, [string]$Cwd) {
 			$outLines += [string]$data
 		}
 	}
+	foreach ($line in ($capturedOut.ToString() -split "\r?\n")) {
+		if ($line -ne '') { $outLines += $line }
+	}
 
 	$errLines = @()
 	foreach ($record in $Runner.Streams.Error) {
 		# ToString keeps the message only; Out-String would echo the prelude line.
 		$errLines += ([string]$record).TrimEnd()
+	}
+	foreach ($line in ($capturedErr.ToString() -split "\r?\n")) {
+		if ($line -ne '') { $errLines += $line }
 	}
 	if ($parseError) { $errLines += $parseError }
 

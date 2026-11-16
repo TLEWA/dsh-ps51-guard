@@ -44,7 +44,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 | `PS51_VERBOSE` | `0` | 设为 `1` 时输出全部提示，包括 R8 等低优先级说明 |
 | `PS51_DIAGNOSTICS` | `1` | 设为 `0` 停止写诊断日志 |
 
-诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
+诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\session-<pid>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
 
 ## 已知限制
 

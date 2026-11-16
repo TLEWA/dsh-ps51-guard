@@ -175,3 +175,39 @@ command: for i in 1 2; do powershell.exe -NoProfile -Command "Write-Output $i"; 
 status: 0
 out-contains: 1
 out-contains: 2
+
+---
+
+# join-path-named: named Join-Path parameters must not be nested.
+command: powershell.exe -NoProfile -Command "Join-Path -Path C:/ -ChildPath foo"
+status: 0
+out-matches: C:\\foo
+err-not-contains: [ps51] Join-Path
+
+---
+
+# console-out: [Console]::Out bypasses the PowerShell streams.
+command: powershell.exe -NoProfile -Command "[Console]::Out.WriteLine('console-out')"
+status: 0
+out-contains: console-out
+
+---
+
+# console-err: [Console]::Error goes to stderr.
+command: powershell.exe -NoProfile -Command "[Console]::Error.WriteLine('console-err')"
+status: 0
+err-contains: console-err
+
+---
+
+# runspace-seed: seed variables, a function and a preference.
+command: powershell.exe -NoProfile -Command '$x = "leak"; $ErrorActionPreference = "SilentlyContinue"; function leakfn { "x" }; "seeded"'
+status: 0
+out-contains: seeded
+
+---
+
+# runspace-clean: the next request must not see the seeded state.
+command: powershell.exe -NoProfile -Command 'if (Test-Path variable:x) { "leaked-var" } elseif (Test-Path function:leakfn) { "leaked-fn" } elseif ($ErrorActionPreference -ne "Continue") { "leaked-pref" } else { "clean" }'
+status: 0
+out-equals: clean
