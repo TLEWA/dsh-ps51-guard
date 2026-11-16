@@ -1,0 +1,177 @@
+# Real command corpus for the PowerShell 5.1 guard.
+# Every block is one command that an agent would plausibly run through ops_bash.
+# Blocks are separated by a line containing three dashes.
+# Lines are "key: value"; keys may repeat. Placeholders in commands are expanded
+# by the runner:
+#   {{ROOT}} -> repository root
+#   {{TMP}}  -> per-case temp directory
+#   {{ENC}}  -> base64 of "Write-Output enc-ok" encoded as UTF-16LE
+# Each case runs through the generated bash shim, so it covers shim -> client ->
+# rules -> resident host as one unit. status is the command's exit status.
+
+---
+
+# hello-world: no rule fires and no annotation is printed.
+command: powershell.exe -NoProfile -Command "Write-Output hello"
+status: 0
+out-contains: hello
+err-not-contains: [ps51]
+
+---
+
+# ps-variable: PowerShell variables inside double quotes must survive bash.
+command: powershell.exe -NoProfile -Command "Write-Output $env:TEMP"
+status: 0
+out-matches: [A-Za-z]:\\
+
+---
+
+# version-is-51: the guard only engages for 5.1 and reports the real version.
+command: powershell.exe -NoProfile -Command "$PSVersionTable.PSVersion.Major"
+status: 0
+out-equals: 5
+
+---
+
+# join-path: R5 nests a call that takes three positional paths.
+command: powershell.exe -NoProfile -Command "Join-Path a b c"
+status: 0
+out-matches: a\\b\\c
+err-contains: Join-Path a b c → Join-Path (Join-Path a b) c
+
+---
+
+# write-error: errors keep their text and set a non-zero exit status.
+command: powershell.exe -NoProfile -Command "Write-Error boom"
+status: 1
+err-contains: boom
+
+---
+
+# exit-code: an explicit exit status is preserved exactly.
+command: powershell.exe -NoProfile -Command "exit 7"
+status: 7
+
+---
+
+# redirect-null: R2 rewrites bash /dev/null redirection in the payload.
+command: powershell.exe -NoProfile -Command "Write-Output kept 2>/dev/null"
+status: 0
+out-contains: kept
+err-contains: 2>/dev/null → 2>$null
+
+---
+
+# export-env: R3 rewrites bash export into a 5.1 environment assignment.
+command: powershell.exe -NoProfile -Command "export FOO=bar; Write-Output $env:FOO"
+status: 0
+out-contains: bar
+err-contains: export FOO=bar → $env:FOO = 'bar'
+
+---
+
+# curl: R4 pins curl to curl.exe because 5.1 aliases curl to Invoke-WebRequest.
+command: powershell.exe -NoProfile -Command "curl --version | Select-Object -First 1"
+status: 0
+out-contains: curl
+err-contains: curl → curl.exe
+
+---
+
+# ls-flags: R6 maps bash ls flags onto Get-ChildItem.
+command: powershell.exe -NoProfile -Command "ls -la"
+status: 0
+out-contains: README.md
+err-contains: ls -la → Get-ChildItem -Force
+
+---
+
+# rm-flags: R6 maps recursive forced removal and the missing path still fails.
+command: powershell.exe -NoProfile -Command "rm -rf {{TMP}}/definitely-not-exists"
+status: 1
+err-contains: Remove-Item -Recurse -Force
+
+---
+
+# and-operator: R9 rejects instead of rewriting, and the hint is always shown.
+command: powershell.exe -NoProfile -Command "Write-Output a && Write-Output b"
+status: 1
+err-contains: Use: a; if ($?) { b }
+
+---
+
+# null-coalescing: R10 rejects 7.0 syntax and points at if/else.
+command: powershell.exe -NoProfile -Command "$x = $null ?? 'd'; Write-Output $x"
+status: 1
+err-contains: Use: $v = if ($null -ne $x) { $x } else { $fallback }
+
+---
+
+# ternary: R10 also covers the 7.0 ternary operator.
+command: powershell.exe -NoProfile -Command "$x = $true ? 'a' : 'b'"
+status: 1
+err-contains: PowerShell 7 syntax
+
+---
+
+# utf8-nobom: R7 has no faithful 5.1 equivalent, so it only annotates.
+command: powershell.exe -NoProfile -Command "'x' | Out-File -Encoding utf8NoBOM {{TMP}}/r7.txt"
+status: 1
+err-contains: [System.IO.File]::WriteAllText
+
+---
+
+# utf8-output: Chinese text survives the shim, host and pipe untouched.
+command: powershell.exe -NoProfile -Command "Write-Output '中文A'"
+status: 0
+out-contains: 中文A
+
+---
+
+# native-child: a native child process inside the payload still runs.
+command: powershell.exe -NoProfile -Command "cmd /c echo hi"
+status: 0
+out-contains: hi
+
+---
+
+# pipeline-sort: a PowerShell pipeline through the host keeps its order.
+command: powershell.exe -NoProfile -Command "'b','a' | Sort-Object"
+status: 0
+out-first-line: a
+
+---
+
+# encoded-command: -EncodedCommand is decoded by 5.1 exactly as before.
+command: powershell.exe -NoProfile -EncodedCommand {{ENC}}
+status: 0
+out-contains: enc-ok
+
+---
+
+# file-mode: -File keeps working for a real script path.
+command: powershell.exe -NoProfile -ExecutionPolicy Bypass -File {{ROOT}}/test/fixtures/file-arg.ps1
+status: 0
+out-contains: file-ok
+
+---
+
+# failing-cmdlet: a cmdlet that reports a missing path exits non-zero.
+command: powershell.exe -NoProfile -Command "Get-ChildItem -Path {{TMP}}/nope-ps51"
+status: 1
+err-contains: nope-ps51
+
+---
+
+# single-quoted-payload: single quotes in bash keep the payload literal.
+command: powershell.exe -NoProfile -Command 'Write-Output "quoted ok"'
+status: 0
+out-contains: quoted ok
+
+---
+
+# bash-loop-counter: a bash for-loop variable still follows bash semantics.
+command: for i in 1 2; do powershell.exe -NoProfile -Command "Write-Output $i"; done
+status: 0
+out-contains: 1
+out-contains: 2

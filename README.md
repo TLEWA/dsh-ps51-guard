@@ -1,35 +1,57 @@
 # dsh-ps51-guard
 
-> 状态：脚手架阶段（0.1.0）。插件本体尚未实现；开发路线图 `ROADMAP.md` 只保留在维护者本地工作区（已 gitignore），不随仓库分发。
+> 状态：0.1.0，M1–M3 已实现。为通过 `ops_bash` 调用的 **Windows PowerShell 5.1** 提供命令传输保护、语法兼容改写与执行结果归一化。
 
-为通过 `ops_bash` 调用的 **Windows PowerShell 5.1** 提供命令传输保护、兼容性改写与执行结果归一化，减少引号、编码和语法差异引发的失败与重试。
+DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powershell.exe` 是 5.1。命令从模型到 PowerShell 要穿过 bash 的引号与变量展开，5.1 又缺少 PowerShell 7 的语法与编码选项，于是出现「引号被吃掉」「`$env:TEMP` 变成 `:TEMP`」「`2>/dev/null` 报错」「错误退出码为 0」等问题。本插件在 bash 进程内接管最终解析到 5.1 的调用，在命令到达 PowerShell 之前完成纠正。
 
-## 它解决什么问题
+## 工作方式
 
-| 类别 | 现状 | 目标 |
+1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖。
+2. shim 用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 时接管；同时导出 bash 变量名清单，供判断 `$name` 归属。
+3. `lib/client.js` 解析原文、按 argv 恢复被 bash 展开的值、套用改写规则，然后把命令交给常驻宿主。
+4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令，stdout/stderr 以**原始字节**回传，退出码归一化。宿主不可用或内部出错时回退到原始调用（fail-open，不会重复执行）。
+
+## 接管范围
+
+- 只接管 `powershell` / `powershell.exe`，且最终解析到的可执行文件是 `%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe` 并通过主版本 = 5 校验（校验结果缓存 24 小时）。
+- `pwsh` 直接放行；若命令词已经被其他插件定义为函数（例如 dsh-pwsh7-bash 的 shim），不覆盖。
+- 绝对路径调用（`/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ...`）与 `cmd /c` 内的调用无法拦截，这是路线图记录在案的已知限制。
+
+## 规则
+
+| 规则 | 触发 | 行为 |
 | --- | --- | --- |
-| 命令传输 | 命令经 bash 展开后，引号与 `$` 可能被提前消耗 | 用 UTF-16LE 的 `-EncodedCommand` 传输命令 |
-| 语法兼容 | PowerShell 7 写法在 5.1 上直接报错 | 按已验证规则改写；高风险写法只给替代方案 |
-| 执行反馈 | 错误被成功退出码或乱码掩盖 | 统一退出码与输出编码，交给现有输出插件处理乱码 |
+| R1 | `-Command` 双引号内的 `$name` | bash 变量按 bash 展开；PowerShell 变量（`$env:TEMP` 等）保留字面量 |
+| R2 | `2>/dev/null` | 改写为 `2>$null` |
+| R3 | `export FOO=bar` | 改写为 `$env:FOO = 'bar'` |
+| R4 | `curl ` | 改写为 `curl.exe `（避开 PowerShell 别名） |
+| R5 | `Join-Path a b c` | 改写为嵌套 `Join-Path (Join-Path a b) c` |
+| R6 | `ls -la`、`rm -rf` | 改写为 `Get-ChildItem -Force`、`Remove-Item -Recurse -Force` |
+| R7 | `-Encoding utf8NoBOM` | 只提示（5.1 的参数集不接受该值） |
+| R8 | PowerShell 内 `> file` | 只提示（5.1 写出 UTF-16LE BOM；需要无 BOM 时用 .NET 接口） |
+| R9 | `&&`、`||` | 只提示替代写法 `a; if ($?) { b }` |
+| R10 | `??`、`?:` | 只提示等价的 `if/else` 写法 |
 
-## 当前状态
+改写时会在 stderr 打印 `[ps51] A → B`，让模型知道命令被调整过。高风险规则（R7–R10）与 R8 的错误只在必要时提示。
 
-本仓库目前只有外围组件：包清单、bundle patch、统一 CI 接线、双语文档与路线图。`lib/index.js` 是占位入口，只保留 Cordis 的 `apply` 契约，好让 manifest、打包与 CI 检查可以真实运行。
-
-## 计划中的能力
-
-- **按可执行文件接管**：只接管最终解析到 PowerShell 5.1 的命令；`pwsh`、其他插件设置的 `powershell` 函数与未知路径一律放行。
-- **常驻宿主**：PowerShell 5.1 冷启动约 200–800ms，首期即交付常驻宿主以压低调用延迟，宿主不可用时降级为一次性进程。
-- **规则与提示**：R1–R10 覆盖 `2>/dev/null`、`export`、`curl`、`Join-Path`、`ls -la` 等已知差异；`&&`、`||`、`??` 只提示替代写法，不自动改写。
-
-## 配置（预留）
+## 配置
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
 | `PS51_GUARD` | `1` | 设为 `0` 完全关闭护栏，恢复原始调用 |
-| `PS51_MODE` | `rewrite` | 设为 `annotate` 时只提示、不改写 |
+| `PS51_MODE` | `rewrite` | `annotate` 只提示不改写；`off` 直接放行 |
+| `PS51_STRICT` | `0` | 设为 `1` 时，命中只提示规则（R7–R10）的命令以退出码 2 拦下 |
+| `PS51_VERBOSE` | `0` | 设为 `1` 时输出全部提示，包括 R8 等低优先级说明 |
+| `PS51_DIAGNOSTICS` | `1` | 设为 `0` 停止写诊断日志 |
 
-上述变量在 M1/M3 落地后才真正生效；当前版本读取它们不会改变任何行为。
+诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
+
+## 已知限制
+
+- 只处理 `-Command` / `-c` 载荷；`-File` 与 `-EncodedCommand` 原样放行，不做改写。
+- 含 `exit` 关键字的脚本走一次性进程（约 0.3–0.5 秒），因为 runspace 拿不到 `exit` 的退出码。
+- 每条命令要启动一次 `node` 客户端；宿主复用后同会话均摊约 100 毫秒/条，仍高于裸 5.1 的热执行。
+- bash 与 PowerShell 同名变量同时出现时按 argv 已展开值处理，并标记 `mixed-variables`，可能不是模型的本意。
 
 ## 开发
 
@@ -38,9 +60,7 @@ npm test
 npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate
 ```
 
-## 路线图
-
-里程碑、验收条件与风险记录在维护者本地的 `ROADMAP.md`（不进仓、不发布）。M0 技术基线已完成大部分；M1 起才动插件本体。
+测试包含规则单测、23 条真实命令语料（经 shim 端到端跑）与 200 次宿主稳定性/时延测量。技术基线与测量数据见 [docs/measurements.md](./docs/measurements.md)。
 
 ## 我的其他 DSH 项目
 
