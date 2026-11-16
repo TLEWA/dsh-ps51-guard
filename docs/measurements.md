@@ -53,6 +53,15 @@ TRAP_RAW trap - DEBUG
 - 宿主复用本身仍是毫秒级；每次请求前调用 `ResetRunspaceState()` 隔离变量/函数/偏好，并重定向 `[Console]::Out/Error` 捕获输出，给单次 exec 增加约 20 ms，换来命令之间不串状态。此前不复位时约 2.6–4.0 ms。
 - 首次调用必须付一次宿主冷启动（约 0.25–0.3 s），与裸 5.1 的冷启动相同，因此不会比现状更慢。
 
+## pwsh7 重定向 / Redirect
+
+`test/pwsh7.test.mjs` 在与真实使用相同的 shim 上验证（6/6）：
+
+- 默认（`PS51_PWSH7` 未设置）`powershell` 与 `powershell.exe` 都执行 PowerShell 7。
+- `PS51_PWSH7=0` 时回到 5.1，并继续由护栏接管。
+- `PATH` 中的包装脚本、以及前一个 `BASH_ENV` 已定义的函数保持所有权，不被覆盖。
+- 重定向生效时 `lib/index.js` 不预热 5.1 宿主；只有关闭重定向或其他模式需要护栏时才启动，避免留下用不到的 `powershell.exe` 进程。
+
 ## 退出码语义 / Exit codes
 
 实测 5.1 的 `-Command` 退出码：`exit 7` → 7；`Write-Error x` → 1；`throw x` → 1；`cmd /c exit 5` → 1；`cmd /c exit 3; echo done` → 0。

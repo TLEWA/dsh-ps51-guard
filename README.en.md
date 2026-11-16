@@ -1,21 +1,23 @@
 # dsh-ps51-guard
 
-> Status: 0.1.0, milestones M1–M3 implemented. Transfer protection, syntax rewrites and result normalization for **Windows PowerShell 5.1** invocations made through `ops_bash`.
+> Status: 0.1.0, milestones M1–M5 implemented. Transfer protection, syntax rewrites and result normalization for **Windows PowerShell 5.1** invocations made through `ops_bash`, plus an opt-out `powershell → pwsh 7` redirect.
 
 DSH's `ops_bash` runs commands in bash, while `powershell`/`powershell.exe` on Windows is 5.1. A command travelling from the model to PowerShell passes through bash quoting and expansion, and 5.1 lacks the syntax and encoding options of PowerShell 7. The result is eaten quotes, `$env:TEMP` becoming `:TEMP`, `2>/dev/null` failing, and errors exiting with code 0. This plugin takes over calls that finally resolve to 5.1 inside the bash process and corrects them before PowerShell sees them.
+
+Starting with the 0.2 milestone it also ships the `powershell → pwsh 7` redirect that used to live in `dsh-pwsh7-bash`; the redirect is on by default, and `PS51_PWSH7=0` brings 5.1 back. Remove the old plugin after migrating so the two do not compete for `BASH_ENV`.
 
 ## How it works
 
 1. In the DSH process the plugin points `BASH_ENV` at its own `bash-env.sh` and chains any previous `BASH_ENV`, so other plugins keep working.
-2. The shim reads the original `$BASH_COMMAND` from bash's `DEBUG` trap (before expansion) and only takes over when the command word finally is 5.1; it also exports the list of bash variable names so `$name` ownership can be decided.
+2. The shim first decides from `PS51_PWSH7` whether to install `powershell → pwsh 7` functions; by default, `powershell`/`powershell.exe` calls that resolve to 5.1 are sent to `pwsh`. It then reads the original `$BASH_COMMAND` from bash's `DEBUG` trap (before expansion) and enables the 5.1 guard only when the command word finally is 5.1 and was not redirected; it also exports the list of bash variable names so `$name` ownership can be decided.
 3. `lib/client.js` parses the original text, restores values bash expanded from argv, applies the rewrite rules, and hands the command to the resident host.
 4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** (including `[Console]::Out/Error`), exposes stdin through `[Console]::In`, and derives the exit code from the script's final `$?` like `-Command`. If the host is unavailable while connecting, the original call is used instead; a host failure after the request was sent exits with code 125 and never replays the command, so nothing runs twice. When the client disconnects or `ops_bash` is cancelled, the host notices within 100 ms and exits, so a long-running command does not finish in the background.
 
 ## Ownership
 
-- Only `powershell` / `powershell.exe` that resolve to `%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe` and pass the major-version-5 check (cached for 24 hours) are taken over.
-- `pwsh` passes straight through; a command word already defined as a function by another plugin (for example the dsh-pwsh7-bash shim) is never overridden.
-- Absolute-path calls (`/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ...`) and calls inside `cmd /c` cannot be intercepted; this is a documented limitation from the roadmap.
+- `powershell` / `powershell.exe` are redirected to `pwsh 7` by default; with `PS51_PWSH7=0` the plugin instead guards calls that resolve to 5.1.
+- Both the redirect and the guard are installed only when the command word finally resolves to 5.1 (or does not exist yet) and its `command -v` result matches the known 5.1 path; PATH wrappers, aliases, other plugins and user-defined functions are never overridden.
+- `pwsh` passes straight through. Absolute-path calls (`/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ...`) and calls inside `cmd /c` cannot be intercepted; this is a documented limitation from the roadmap.
 
 ## Rules
 
@@ -38,16 +40,20 @@ Whenever a rewrite happens, `[ps51] A → B` is printed to stderr so the model k
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `PS51_GUARD` | `1` | Set to `0` to disable the guard entirely and restore the original call |
+| `PS51_GUARD` | `1` | Set to `0` to disable the guard and the redirect entirely and restore the original call |
+| `PS51_PWSH7` | `1` | Set to `0` to disable the `powershell → pwsh 7` redirect while keeping the 5.1 guard |
+| `PS51_PWSH7_PATH` | auto-detected | Explicit path to `pwsh.exe` |
 | `PS51_MODE` | `rewrite` | `annotate` reports without rewriting; `off` passes everything through |
 | `PS51_STRICT` | `0` | Set to `1` to block hint-only commands (R7–R10) with exit code 2 |
 | `PS51_VERBOSE` | `0` | Set to `1` to print every hint, including low-priority notes such as R8 |
 | `PS51_DIAGNOSTICS` | `1` | Set to `0` to stop writing the diagnostics log |
 
-Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
+`PS51_GUARD` and `PS51_PWSH7` are read when the DSH process starts; restart DSH after changing them. Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
 
 ## Known limitations
 
+- The redirect is installed as a shell function at bash startup; `command powershell`, absolute paths and `cmd /c` bypass it and still run 5.1 (and also bypass the guard).
+- The redirect switch is read when DSH starts; a function already installed in a shell does not change when a single command is prefixed with `PS51_PWSH7=0`. Set it before starting DSH and restart when 5.1 is needed.
 - Only `-Command` / `-c` payloads are handled; `-File` and `-EncodedCommand` pass through untouched.
 - Scripts containing the `exit` keyword run in a one-shot process (about 0.3–0.5 s) because a runspace cannot report `exit` codes.
 - Every command starts one `node` client; with the warmed host this averages about 100 ms per command in one bash session, still above a bare hot 5.1 run.

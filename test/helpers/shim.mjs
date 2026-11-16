@@ -22,9 +22,10 @@ export const PIPE = 'dsh-ps51-guard-test-' + process.pid + '-' + Math.random().t
 
 /**
  * Create a temp runtime directory plus the generated shim.
- * @returns {{runtime: string, shimPath: string, pipe: string, cleanup: () => void}}
+ * @param {{pwsh7?: string | null, guard?: boolean}} [options]
+ * @returns {{runtime: string, shimPath: string, pipe: string, pwsh7: string | null, cleanup: () => void}}
  */
-export function createRuntime() {
+export function createRuntime({ pwsh7 = null, guard = true } = {}) {
 	const runtime = mkdtempSync(join(tmpdir(), 'ps51-guard-test-'));
 	const shimPath = join(runtime, 'bash-env.sh');
 	const shim = buildShim({
@@ -37,12 +38,15 @@ export function createRuntime() {
 		// A unique pipe per test process keeps a stale host from an earlier run
 		// (same name, old script) from answering this run's requests.
 		marker: 'test',
+		pwsh7,
+		guard,
 	});
 	writeFileSync(shimPath, shim, 'utf8');
 	return {
 		runtime,
 		shimPath,
 		pipe: PIPE,
+		pwsh7,
 		cleanup() {
 			rmSync(runtime, { recursive: true, force: true });
 		},
@@ -70,6 +74,7 @@ export function runBash(command, { runtime, env = {}, timeoutMs = 120000 } = {})
 			PS51_PREV_BASH_ENV: '',
 			PS51_RUNTIME: runtime.runtime,
 			PS51_PIPE: runtime.pipe,
+			PS51_PWSH7: runtime.pwsh7 ? '1' : '0',
 			...env,
 		},
 		encoding: 'utf8',

@@ -1,7 +1,7 @@
 {
   "name": "dsh-ps51-guard",
   "version": "0.1.0",
-  "description": "Guard Windows PowerShell 5.1 invocations made through ops_bash: transfer protection, compatibility rewrites and result normalization. 为通过 ops_bash 调用的 Windows PowerShell 5.1 提供命令传输保护、兼容改写与执行结果归一化。",
+  "description": "Guard Windows PowerShell 5.1 invocations made through ops_bash: opt-out powershell-to-pwsh 7 redirect, transfer protection, compatibility rewrites and result normalization. 为通过 ops_bash 调用的 Windows PowerShell 5.1 提供可关闭的 powershell 到 pwsh 7 重定向、命令传输保护、兼容改写与执行结果归一化。",
   "author": "TLEWA",
   "type": "module",
   "main": "./lib/index.js",
@@ -27,6 +27,7 @@
     "dsh-plugin",
     "powershell",
     "powershell-5.1",
+    "pwsh",
     "ops_bash",
     "windows"
   ],
@@ -56,8 +57,8 @@
     }
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/lexer.js && node --check lib/rules.js && node --check lib/frames.js && node --check lib/resolver.js && node --check lib/shim.js && node --check lib/host-control.js && node --check test/smoke.test.mjs && node --check test/rules.test.mjs && node --check test/corpus.test.mjs && node --check test/host.test.mjs && node --check test/ownership.test.mjs && node --check test/no-replay.test.mjs",
-    "test": "node test/smoke.test.mjs && node test/rules.test.mjs && node test/corpus.test.mjs && node test/host.test.mjs && node test/ownership.test.mjs && node test/no-replay.test.mjs",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/lexer.js && node --check lib/rules.js && node --check lib/frames.js && node --check lib/resolver.js && node --check lib/shim.js && node --check lib/pwsh7.js && node --check lib/host-control.js && node --check test/smoke.test.mjs && node --check test/rules.test.mjs && node --check test/corpus.test.mjs && node --check test/host.test.mjs && node --check test/ownership.test.mjs && node --check test/no-replay.test.mjs && node --check test/pwsh7.test.mjs",
+    "test": "node test/smoke.test.mjs && node test/rules.test.mjs && node test/corpus.test.mjs && node test/host.test.mjs && node test/ownership.test.mjs && node test/no-replay.test.mjs && node test/pwsh7.test.mjs",
     "prepublishOnly": "npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate --prepublish"
   }
 }
