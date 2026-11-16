@@ -1,0 +1,61 @@
+{
+  "name": "dsh-ps51-guard",
+  "version": "0.1.0",
+  "description": "Guard Windows PowerShell 5.1 invocations made through ops_bash: transfer protection, compatibility rewrites and result normalization. 为通过 ops_bash 调用的 Windows PowerShell 5.1 提供命令传输保护、兼容改写与执行结果归一化。",
+  "author": "TLEWA",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "CHANGELOG.en.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "powershell",
+    "powershell-5.1",
+    "ops_bash",
+    "windows"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TLEWA/dsh-ps51-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TLEWA/dsh-ps51-guard/issues"
+  },
+  "homepage": "https://github.com/TLEWA/dsh-ps51-guard#readme",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5"
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "engines": {
+      "dsh": ">=0.2.2-rc.1"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "check": "node --check lib/index.js && node --check test/smoke.test.mjs",
+    "test": "node test/smoke.test.mjs",
+    "prepublishOnly": "npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate --prepublish"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+*.tgz
+.DS_Store
+Thumbs.db
+*.log
+coverage/
+.env
+.env.*
+!.env.example
+.ci/
+
+# 本地规划文档：只留在维护者工作区，不进仓、不发布
+/ROADMAP.md

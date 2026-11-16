@@ -1,0 +1,63 @@
+name: ci-rerun
+
+# 标签或 PR 描述变化不新建 CI run，而是重跑同一 commit 上已有的 pr-guard run。
+# 原因：新建 run 会在同一个 SHA 上留下第二套 check suite，ruleset 无法确定哪套有效，
+# PR 会停在 mergeStateStatus=BLOCKED，即使 gh pr checks 看起来全绿。
+# 重跑只是原 run 的新 attempt，check run 原位替换，状态始终只有一套。
+# 只重跑 pr-guard：guard 读取实时标签与描述，几秒钟就能重估；
+# verify 矩阵与标签、描述无关，SHA 没变就不该再烧六格机时。
+# 用 pull_request_target 而不是 pull_request：fork PR 的 pull_request 事件只有只读 token，
+# 拿不到 actions: write 就重跑不了；本工作流不检出、不执行 PR 代码，只用 API 重跑自己仓的 run。
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+jobs:
+  rerun:
+    # 并发控制在 job 层而不是工作流层：job 的 if 不匹配时任务不会启动，
+    # 也就不会进入并发组。否则任意无关标签（增删）都会取消正在等待或执行的重跑。
+    # 组用 PR 编号而不是源分支名：不同 fork 的同名分支不会互相取消。
+    # cancel-in-progress 必须为 false：取消会在同一 SHA 上留下 cancelled 的 check run，
+    # mergeStateStatus 会变成 UNSTABLE。两个标签一起加时，两个任务串行执行，后一个会再重跑一次，幂等。
+    concurrency:
+      group: ci-rerun-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    # 只有放行类标签才会改变 guard 结论，其余标签不消耗 CI 分钟；
+    # 描述编辑同样会改 guard 的 checklist/分支名判定，需要重估。
+    if: github.event.action == 'edited' || contains(fromJSON('["ci-change","human-approved"]'), github.event.label.name)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 重跑该 commit 上最近一次 pr-guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "/repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+            --jq '[.workflow_runs[] | select(.name == "pr-guard")] | sort_by(.created_at) | last | .id // empty')
+          if [ -z "$run_id" ]; then
+            echo '该 commit 上没有 pr-guard run（例如拆分之前创建的旧 PR，需要补一个提交重新触发）'
+            exit 0
+          fi
+          for _ in $(seq 1 60); do
+            status=$(gh api "/repos/$REPO/actions/runs/$run_id" --jq .status)
+            if [ "$status" = 'completed' ]; then break; fi
+            echo "run $run_id 仍在 $status，等待后再重跑…"
+            sleep 10
+          done
+          status=$(gh api "/repos/$REPO/actions/runs/$run_id" --jq .status)
+          if [ "$status" != 'completed' ]; then
+            echo "::warning::run $run_id 等待 10 分钟仍未结束，跳过本次重跑"
+            exit 0
+          fi
+          if gh api -X POST "/repos/$REPO/actions/runs/$run_id/rerun" 2>/dev/null; then
+            echo "已重跑 pr-guard run $run_id：同一 SHA、同一套 check suite"
+          else
+            echo "run $run_id 已在重跑或刚结束，跳过本次重复请求"
+          fi
