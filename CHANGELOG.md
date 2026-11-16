@@ -11,8 +11,9 @@
 - 实现护栏本体：注入 `BASH_ENV` 并链式加载原有值；用 `DEBUG` trap 捕获展开前的 `$BASH_COMMAND`；只在命令最终解析到 PowerShell 5.1 时接管，`pwsh` 与其他插件定义的函数直接放行；区分 bash 与 PowerShell 变量归属（R1）；请求携带调用方的 stdin（脚本可从 `[Console]::In` 读取），环境按请求完整快照还原（调用方 unset 的变量也会从宿主删除）；自动改写 R2–R6（`2>/dev/null`、`export`、`curl`、`Join-Path`、`ls -la`/`rm -rf`）；R7–R10 只提示替代写法；改写时输出 `[ps51] A → B` 注解。
 - 常驻 PowerShell 5.1 宿主：命名管道、长度前缀 + JSON 帧；空闲 10 分钟退出、按需重建、崩溃或超时后重启；runspace 内复用，输出按原始字节透传（`[Console]::Out/Error` 单独按原始字节回传），退出码取脚本最终 `$?`；客户端断开或取消时宿主中止执行并退出；含 `exit` 关键字的脚本走一次性进程以保证退出码精确。
 - 合并原先由 `dsh-pwsh7-bash` 提供的 `powershell → pwsh 7` 重定向：默认开启，`PS51_PWSH7=0` 关闭，`PS51_PWSH7_PATH` 可指定 `pwsh.exe`；只接管最终解析到 5.1（或命令尚不存在）的命令词，已有函数、别名和 `PATH` 包装器不覆盖；`PS51_GUARD=0` 同时关闭护栏与重定向。
-- 配置开关 `PS51_GUARD`、`PS51_PWSH7`、`PS51_PWSH7_PATH`、`PS51_MODE`、`PS51_STRICT`、`PS51_VERBOSE`、`PS51_DIAGNOSTICS`，以及 JSON 行诊断日志。
-- 测试：规则单测、33 条真实命令语料（经 shim 端到端）、6 条重定向集成测试、200 次宿主稳定性与时延测量；`docs/measurements.md` 记录 M0 基线、时延与退出码语义。
+- 配置开关 `PS51_GUARD`、`PS51_PWSH7`、`PS51_PWSH7_PATH`、`PS51_MODE`、`PS51_STRICT`、`PS51_VERBOSE`、`PS51_DIAGNOSTICS`、`PS51_SPAWN_GUARD`，以及 JSON 行诊断日志。
+- 增加 `subprocess.spawn` 注入（`PS51_SPAWN_GUARD=1` 默认开启）：在 spawn 时把 shim 写入最终环境，并链式保留该环境里已有的 `BASH_ENV`，解决另一个插件在本插件之后覆盖进程级 `BASH_ENV` 导致护栏失效的问题；显式空 `BASH_ENV` 与 `PS51_GUARD=0` 仍被尊重。新增 29 条桥接单测（链文件、路径等价、spawn 包装生命周期与卸载透明性）。
+- 测试：规则单测、33 条真实命令语料（经 shim 端到端）、7 条重定向集成测试、200 次宿主稳定性与时延测量；`docs/measurements.md` 记录 M0 基线、时延与退出码语义。
 
 ### 说明
 

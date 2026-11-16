@@ -8,7 +8,7 @@ Starting with the 0.2 milestone it also ships the `powershell → pwsh 7` redire
 
 ## How it works
 
-1. In the DSH process the plugin points `BASH_ENV` at its own `bash-env.sh` and chains any previous `BASH_ENV`, so other plugins keep working.
+1. In the DSH process the plugin points `BASH_ENV` at its own `bash-env.sh` and chains any previous `BASH_ENV`, so other plugins keep working. It also wraps `subprocess.spawn`, injecting the same shim into the final spawn environment and chaining the `BASH_ENV` found there. Even if another plugin overwrites the process-wide `BASH_ENV` after this one, `ops_bash` still loads this shim, so load order is no longer decisive.
 2. The shim first decides from `PS51_PWSH7` whether to install `powershell → pwsh 7` functions; by default, `powershell`/`powershell.exe` calls that resolve to 5.1 are sent to `pwsh`. It then reads the original `$BASH_COMMAND` from bash's `DEBUG` trap (before expansion) and enables the 5.1 guard only when the command word finally is 5.1 and was not redirected; it also exports the list of bash variable names so `$name` ownership can be decided.
 3. `lib/client.js` parses the original text, restores values bash expanded from argv, applies the rewrite rules, and hands the command to the resident host.
 4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** (including `[Console]::Out/Error`), exposes stdin through `[Console]::In`, and derives the exit code from the script's final `$?` like `-Command`. If the host is unavailable while connecting, the original call is used instead; a host failure after the request was sent exits with code 125 and never replays the command, so nothing runs twice. When the client disconnects or `ops_bash` is cancelled, the host notices within 100 ms and exits, so a long-running command does not finish in the background.
@@ -43,12 +43,13 @@ Whenever a rewrite happens, `[ps51] A → B` is printed to stderr so the model k
 | `PS51_GUARD` | `1` | Set to `0` to disable the guard and the redirect entirely and restore the original call |
 | `PS51_PWSH7` | `1` | Set to `0` to disable the `powershell → pwsh 7` redirect while keeping the 5.1 guard |
 | `PS51_PWSH7_PATH` | auto-detected | Explicit path to `pwsh.exe` |
+| `PS51_SPAWN_GUARD` | `1` | Set to `0` to disable the `subprocess.spawn` injection and keep only the process-wide `BASH_ENV` (a later plugin may overwrite it) |
 | `PS51_MODE` | `rewrite` | `annotate` reports without rewriting; `off` passes everything through |
 | `PS51_STRICT` | `0` | Set to `1` to block hint-only commands (R7–R10) with exit code 2 |
 | `PS51_VERBOSE` | `0` | Set to `1` to print every hint, including low-priority notes such as R8 |
 | `PS51_DIAGNOSTICS` | `1` | Set to `0` to stop writing the diagnostics log |
 
-`PS51_GUARD` and `PS51_PWSH7` are read when the DSH process starts; restart DSH after changing them. Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
+`PS51_SPAWN_GUARD` only affects the `subprocess.spawn` injection: the bridge handles `bash -c` or specs that already carry a non-empty `BASH_ENV`, and an explicit empty `BASH_ENV` is treated as a deliberate opt-out. `PS51_GUARD`, `PS51_PWSH7` and `PS51_SPAWN_GUARD` are read when the DSH process starts; restart DSH after changing them. Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (JSON lines with the matched rules and the command before/after rewriting); turn them off after debugging. Setting `PS51_TRACE=1` makes the host also write `host-trace.log`.
 
 ## Known limitations
 
@@ -63,6 +64,8 @@ Whenever a rewrite happens, `[ps51] A → B` is printed to stderr so the model k
 - `[Console]::Out/Error` text is forwarded byte for byte but its order relative to PowerShell pipeline output is approximate (console text comes before the formatted pipeline output).
 - The exit code is the final `$?` of the script; suppressing errors with `-ErrorAction SilentlyContinue` can therefore still yield 0.
 - Cancellation exits the host to stop the pipeline; native child processes started by the script are not guaranteed to be terminated with it.
+- The spawn injection is one wrapper deep; if another plugin later wraps `subprocess.spawn` again and drops or rewrites the final spec, or replaces the subprocess service entirely, the injection may stop working. The bridge never changes the original command to win; set `PS51_SPAWN_GUARD=0` to turn it off.
+- An explicit empty `BASH_ENV` on a spawn is respected as an opt-out and receives no injection.
 
 ## Development
 

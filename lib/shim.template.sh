@@ -1,7 +1,12 @@
 # dsh-ps51-guard: generated BASH_ENV shim (@@MARKER@@)
 # Do not edit: it is rewritten every time the plugin starts.
-if [ -n "$PS51_PREV_BASH_ENV" ] && [ -r "$PS51_PREV_BASH_ENV" ] && [ "$PS51_PREV_BASH_ENV" != "$BASH_ENV" ]; then
+# A chain file may itself include this shim (another plugin can preserve
+# BASH_ENV that way). The sentinel stops that cycle; it is not exported, so it
+# never reaches the command's own child processes.
+if [ -n "$PS51_PREV_BASH_ENV" ] && [ -r "$PS51_PREV_BASH_ENV" ] && [ "$PS51_PREV_BASH_ENV" != "$BASH_ENV" ] && [ -z "@@DL@@PS51_BASH_ENV_CHAINING:-}" ]; then
+  PS51_BASH_ENV_CHAINING=1
   . "$PS51_PREV_BASH_ENV"
+  unset PS51_BASH_ENV_CHAINING
 fi
 
 if [ "@@DL@@PS51_GUARD:-1}" = "0" ]; then

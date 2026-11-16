@@ -55,12 +55,27 @@ TRAP_RAW trap - DEBUG
 
 ## pwsh7 重定向 / Redirect
 
-`test/pwsh7.test.mjs` 在与真实使用相同的 shim 上验证（6/6）：
+`test/pwsh7.test.mjs` 在与真实使用相同的 shim 上验证（7/7）：
 
 - 默认（`PS51_PWSH7` 未设置）`powershell` 与 `powershell.exe` 都执行 PowerShell 7。
 - `PS51_PWSH7=0` 时回到 5.1，并继续由护栏接管。
 - `PATH` 中的包装脚本、以及前一个 `BASH_ENV` 已定义的函数保持所有权，不被覆盖。
 - 重定向生效时 `lib/index.js` 不预热 5.1 宿主；只有关闭重定向或其他模式需要护栏时才启动，避免留下用不到的 `powershell.exe` 进程。
+- 前一个 `BASH_ENV` 如果又 source 回本插件的 shim，`PS51_BASH_ENV_CHAINING` 哨兵会截断循环；该变量不导出，不会传给命令自己的子进程。
+
+## BASH_ENV 竞争与 spawn 注入 / Spawn injection
+
+方案 B 在宿主 `subprocess.spawn` 上包一层，在 spawn 时把本插件的 shim 写进最终 env，因此不再依赖两个插件谁先改 `process.env.BASH_ENV`。`test/subprocess.test.mjs` 覆盖纯函数与生命周期，共 29/29：
+
+- 只处理 `bash -c` 形态，或 env 里已经带有非空 `BASH_ENV` 的 spec；两者都不满足时按原引用返回。省略 env 的 `bash -c` 会从进程环境复制一份，确保 shim 仍能生效；非 bash 且省略 env 时不动。
+- spec 里显式写 `BASH_ENV=''` 表示调用方主动关闭，原样尊重；`PS51_GUARD=0` 同样原样返回。
+- 原有的 `BASH_ENV`、`PS51_PREV_BASH_ENV`、进程级 ambient 值会按顺序进入生成的 chain 文件，不会丢掉更早的插件；单源时直接复用，不建 chain 文件。
+- 不修改传入的 spec 和 env，返回浅拷贝；非目标命令仍以原引用到达原 spawn，this、额外参数、返回值和异常都透传。
+- 同一服务重复激活不会二次包装；插件卸载时先让旧 wrapper 透明，再在栈顶时恢复原 spawn 并删除标记。
+- 服务冻结、没有 `ctx.inject`、spawn 抛错、cleanup 注册失败都 fail-open，最坏退化为仅靠进程级 `BASH_ENV`。没有 `effect`/`on` 生命周期时回滚包装，避免插件卸载后留下永远生效的 wrapper。
+- `PS51_SPAWN_GUARD=0` 可整体关闭注入，用于需要原始 spawn 的宿主。
+
+本机通过假 Cordis 服务加真实 `spawnSync` 验证过：spec 的 `BASH_ENV` 被另一个 shim 覆盖后，最终 spawn 仍拿到本插件 shim，且另一个 shim 经 chain 文件先执行；真实 DSH 重启后的回归验证仍待做。
 
 ## 退出码语义 / Exit codes
 

@@ -8,7 +8,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 
 ## 工作方式
 
-1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖。
+1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖；同时包装 `subprocess.spawn`，在每次 bash 启动时把同一个 shim 注入最终 spawn 环境，并把该环境里原有的 `BASH_ENV` 串到链上。这样即使另一个插件在本插件之后改写进程级 `BASH_ENV`，`ops_bash` 仍会加载本插件，加载顺序不再决定生效与否。
 2. shim 先按 `PS51_PWSH7` 决定是否安装 `powershell → pwsh 7` 函数；默认把解析到 5.1 的 `powershell`/`powershell.exe` 转给 `pwsh`。随后用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 且未被重定向时启用 5.1 护栏；同时导出 bash 变量名清单，供判断 `$name` 归属。
 3. `lib/client.js` 解析原文、按 argv 恢复被 bash 展开的值、套用改写规则，然后把命令交给常驻宿主。
 4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令；stdout/stderr 以**原始字节**回传（含 `[Console]::Out/Error` 的输出），stdin 通过 `[Console]::In` 提供给脚本，退出码取脚本最后一条命令的 `$?`，与 `-Command` 一致。连接阶段宿主不可用时回退到原始调用；请求已经发出后的宿主故障只报错退出（退出码 125）而不重放，任何情况下都不会执行两次。客户端断开或 `ops_bash` 被取消时，宿主会在 100 毫秒内发现并退出，正在执行的长命令不会在后台继续跑完。
@@ -43,12 +43,13 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 | `PS51_GUARD` | `1` | 设为 `0` 完全关闭护栏与重定向，恢复原始调用 |
 | `PS51_PWSH7` | `1` | 设为 `0` 关闭 `powershell → pwsh 7` 重定向，保留 5.1 护栏 |
 | `PS51_PWSH7_PATH` | 自动探测 | 指定 `pwsh.exe` 的路径 |
+| `PS51_SPAWN_GUARD` | `1` | 设为 `0` 关闭 `subprocess.spawn` 注入，只保留进程级 `BASH_ENV`（后加载的插件可能覆盖它） |
 | `PS51_MODE` | `rewrite` | `annotate` 只提示不改写；`off` 直接放行 |
 | `PS51_STRICT` | `0` | 设为 `1` 时，命中只提示规则（R7–R10）的命令以退出码 2 拦下 |
 | `PS51_VERBOSE` | `0` | 设为 `1` 时输出全部提示，包括 R8 等低优先级说明 |
 | `PS51_DIAGNOSTICS` | `1` | 设为 `0` 停止写诊断日志 |
 
-`PS51_GUARD` 与 `PS51_PWSH7` 在 DSH 进程启动时读取，修改后需重启 DSH。诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\session-<pid>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
+`PS51_SPAWN_GUARD` 只影响 `subprocess.spawn` 注入：桥只处理 `bash -c` 或本来就带非空 `BASH_ENV` 的 spawn，调用方显式把 `BASH_ENV` 设为空字符串会被视为主动关闭。`PS51_GUARD`、`PS51_PWSH7` 与 `PS51_SPAWN_GUARD` 都在 DSH 进程启动时读取，修改后需重启 DSH。诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\session-<pid>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
 
 ## 已知限制
 
@@ -63,6 +64,8 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - `[Console]::Out/Error` 按原始字节单独回传，与 PowerShell pipeline 输出的相对顺序是近似的（console 文本先于格式化后的 pipeline 输出）。
 - 退出码取脚本最后一条命令的 `$?`；`-ErrorAction SilentlyContinue` 之类吞掉错误时，即使有错误也可能返回 0。
 - 取消时宿主直接退出以停止 pipeline；由脚本启动的原生子进程不保证一并终止。
+- spawn 注入只包一层；若另一个插件在本插件之后再次包装 `subprocess.spawn` 并丢弃或重写最终 spec，或整体替换 subprocess 服务，注入可能失效。桥不会为了实现注入而改变原命令；可用 `PS51_SPAWN_GUARD=0` 关闭它。
+- 调用方显式把 spawn 的 `BASH_ENV` 设为空字符串时，桥尊重该选择，不再注入。
 
 ## 开发
 

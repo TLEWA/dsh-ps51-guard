@@ -52,6 +52,8 @@ writeFileSync(wrapper, '#!/usr/bin/env bash\necho wrapper-ok\n', 'utf8');
 chmodSync(wrapper, 0o755);
 const previousShim = join(runtime.runtime, 'previous-bash-env.sh');
 writeFileSync(previousShim, 'powershell() { echo function-ok; }\n', 'utf8');
+const loopShim = join(runtime.runtime, 'loop-previous.sh');
+writeFileSync(loopShim, '. "$BASH_ENV"\n', 'utf8');
 
 try {
 	test('bare powershell goes to PowerShell 7 by default', () => {
@@ -98,6 +100,16 @@ try {
 		});
 		assert.equal(result.code, 0);
 		assert.match(result.stdout, /function-ok/);
+	});
+
+	test('a previous BASH_ENV that sources the shim does not recurse', () => {
+		const result = runBash('type -t powershell', {
+			runtime,
+			env: { PS51_PREV_BASH_ENV: loopShim.replace(/\\/g, '/') },
+			timeoutMs: 15000,
+		});
+		assert.equal(result.code, 0);
+		assert.match(result.stdout, /function/);
 	});
 } finally {
 	runtime.cleanup();
