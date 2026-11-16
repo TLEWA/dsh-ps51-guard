@@ -15,6 +15,12 @@ import { fileURLToPath } from 'node:url';
 import { encodeFrame, FrameDecoder } from '../lib/frames.js';
 import { EXECUTABLE, PIPE, createRuntime } from './helpers/shim.mjs';
 
+// The host is a PowerShell 5.1 process; nothing to run on other platforms.
+if (process.platform !== 'win32') {
+	console.log('host: skipped (requires Windows PowerShell 5.1)');
+	process.exit(0);
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
 const HOST_SCRIPT = join(ROOT, 'host', 'ps51-host.ps1');

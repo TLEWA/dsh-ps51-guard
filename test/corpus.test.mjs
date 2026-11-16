@@ -14,6 +14,13 @@ import { fileURLToPath } from 'node:url';
 import { createRuntime, runBash } from './helpers/shim.mjs';
 import { startHost, killHost } from './helpers/host.mjs';
 
+// The guard only exists on Windows: elsewhere there is no PowerShell 5.1 to
+// drive, so this integration test has nothing to measure.
+if (process.platform !== 'win32') {
+	console.log('corpus: skipped (requires Windows PowerShell 5.1)');
+	process.exit(0);
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HERE);
 const CORPUS = join(HERE, 'corpus', 'v1.txt');
