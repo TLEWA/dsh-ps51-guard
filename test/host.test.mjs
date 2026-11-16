@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +56,7 @@ function startHost() {
 	host = spawn(
 		EXECUTABLE,
 		['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', HOST_SCRIPT, '-PipeName', PIPE],
-		{ stdio: 'ignore', windowsHide: true }
+		{ stdio: 'ignore', windowsHide: true, env: { ...process.env, PS51_RUNTIME: runtime.runtime, PS51_TRACE: '1' } }
 	);
 }
 
@@ -200,6 +201,35 @@ try {
 		startHost();
 		socket = await connectHost(15000);
 		const pong = await send({ id: 'ping-2', op: 'ping' }, 5000);
+		assert.ok(pong);
+	});
+
+	await test('stops a running pipeline when the client disconnects', async () => {
+		socket.destroy();
+		socket = null;
+		const cancel = await connectHost(5000);
+		cancel.write(
+			encodeFrame({
+				id: 'cancel-1',
+				op: 'exec',
+				script: 'Start-Sleep -Seconds 5; Write-Output should-not-run',
+			})
+		);
+		await new Promise((done) => setTimeout(done, 400));
+		const exited = new Promise((resolve) => host.once('exit', () => resolve(true)));
+		cancel.destroy();
+		const stopped = await Promise.race([
+			exited,
+			new Promise((resolve) => setTimeout(() => resolve(false), 3000)),
+		]);
+		assert.equal(stopped, true, 'host kept running after the client disconnected');
+		const trace = readFileSync(join(runtime.runtime, 'host-trace.log'), 'utf8');
+		assert.match(trace, /client disconnected; aborting execution/);
+		assert.doesNotMatch(trace, /should-not-run/);
+
+		startHost();
+		socket = await connectHost(15000);
+		const pong = await send({ id: 'ping-3', op: 'ping' }, 5000);
 		assert.ok(pong);
 	});
 } finally {

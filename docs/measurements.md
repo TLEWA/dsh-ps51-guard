@@ -46,7 +46,7 @@ TRAP_RAW trap - DEBUG
 | 护栏首次调用（bash + node 客户端 + 冷启动宿主） | 约 330 ms |
 | 护栏热调用（宿主已就绪，单条命令） | 约 155–165 ms |
 | 护栏热调用（同一 bash 会话内 10 条命令均摊） | 约 99–143 ms |
-| 宿主内单次 exec（Node 直连管道，200 次，含每请求 runspace 重置、控制台捕获与 stdin 注入） | p50 约 21.7–23.7 ms，p95 约 26.1–28.9 ms，max 约 90.7–99.5 ms |
+| 宿主内单次 exec（Node 直连管道，200 次，含每请求 runspace 重置、控制台捕获与 stdin 注入） | p50 约 15.3–23.7 ms，p95 约 20.0–28.9 ms，max 约 87.2–99.5 ms |
 
 解读：
 - 热路径的固定成本主要是「每条命令一次 `node client.js` 启动 + 一次 bash 启动」；路线图 M2 的 p50 < 120 ms 已达成（按同会话均摊口径）。
@@ -57,6 +57,10 @@ TRAP_RAW trap - DEBUG
 
 实测 5.1 的 `-Command` 退出码：`exit 7` → 7；`Write-Error x` → 1；`throw x` → 1；`cmd /c exit 5` → 1；`cmd /c exit 3; echo done` → 0。
 宿主内 runspace 无法拿到 `exit` 的退出码（`EndInvoke` 正常返回、`LASTEXITCODE` 仍为 0），因此含 `exit` 关键字的脚本走一次性 spawn；其余脚本在用户脚本后追加一行 `$global:__ps51ExitOk = $?`，执行后从 `SessionStateProxy` 读回，映射 0/1，与 `-Command` 的最终 `$?` 语义一致（`cmd /c exit 5` → 1，`cmd /c exit 3; Write-Output done` → 0）。
+
+## 取消 / Cancellation
+
+宿主在脚本执行期间每 100 ms 用 `PeekNamedPipe` 检查调用方管道；客户端断开（包括 `ops_bash` 取消）时直接退出宿主进程，正在执行的 pipeline 随进程终止，不会在后台继续。`test/host.test.mjs` 用 `Start-Sleep -Seconds 5; Write-Output should-not-run` 验证宿主在 3 秒内退出且 trace 中没有完成记录。
 
 ## 输出编码 / Output encoding
 

@@ -9,7 +9,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖。
 2. shim 用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 时接管；同时导出 bash 变量名清单，供判断 `$name` 归属。
 3. `lib/client.js` 解析原文、按 argv 恢复被 bash 展开的值、套用改写规则，然后把命令交给常驻宿主。
-4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令；stdout/stderr 以**原始字节**回传（含 `[Console]::Out/Error` 的输出），stdin 通过 `[Console]::In` 提供给脚本，退出码取脚本最后一条命令的 `$?`，与 `-Command` 一致。连接阶段宿主不可用时回退到原始调用；请求已经发出后的宿主故障只报错退出（退出码 125）而不重放，任何情况下都不会执行两次。
+4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令；stdout/stderr 以**原始字节**回传（含 `[Console]::Out/Error` 的输出），stdin 通过 `[Console]::In` 提供给脚本，退出码取脚本最后一条命令的 `$?`，与 `-Command` 一致。连接阶段宿主不可用时回退到原始调用；请求已经发出后的宿主故障只报错退出（退出码 125）而不重放，任何情况下都不会执行两次。客户端断开或 `ops_bash` 被取消时，宿主会在 100 毫秒内发现并退出，正在执行的长命令不会在后台继续跑完。
 
 ## 接管范围
 
@@ -56,6 +56,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - stdin 只暴露给 `[Console]::In`；宿主派生的原生子进程仍然拿到关闭的 stdin。
 - `[Console]::Out/Error` 按原始字节单独回传，与 PowerShell pipeline 输出的相对顺序是近似的（console 文本先于格式化后的 pipeline 输出）。
 - 退出码取脚本最后一条命令的 `$?`；`-ErrorAction SilentlyContinue` 之类吞掉错误时，即使有错误也可能返回 0。
+- 取消时宿主直接退出以停止 pipeline；由脚本启动的原生子进程不保证一并终止。
 
 ## 开发
 

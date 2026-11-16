@@ -42,6 +42,50 @@ function Write-Trace([string]$Message) {
 	}
 }
 
+# NamedPipeServerStream.IsConnected only reflects the last I/O, so a client
+# that disappears while a script runs would go unnoticed. PeekNamedPipe gives
+# a cheap non-blocking check: it fails with ERROR_BROKEN_PIPE once the peer is
+# gone, and reports buffered bytes without consuming them.
+$PipeProbeReady = $false
+try {
+	Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Ps51PipeProbe {
+	[DllImport("kernel32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	public static extern bool PeekNamedPipe(IntPtr hNamedPipe, IntPtr lpBuffer, uint nBufferSize, IntPtr lpBytesRead, out uint lpTotalBytesAvail, IntPtr lpBytesLeftThisMessage);
+}
+'@ -ErrorAction Stop
+	$PipeProbeReady = $true
+} catch {
+	Write-Trace ('pipe probe unavailable: ' + $_.Exception.Message)
+}
+
+function Test-ClientGone([System.IO.Stream]$Stream) {
+	if (-not $PipeProbeReady) { return $false }
+	try {
+		$handle = $Stream.SafePipeHandle
+		if ($null -eq $handle -or $handle.IsInvalid) { return $true }
+		$available = [uint32]0
+		$ok = [Ps51PipeProbe]::PeekNamedPipe(
+			$handle.DangerousGetHandle(),
+			[IntPtr]::Zero,
+			0,
+			[IntPtr]::Zero,
+			[ref]$available,
+			[IntPtr]::Zero
+		)
+		if (-not $ok) { return $true }
+		# The protocol sends one request and then waits; extra bytes mean the
+		# peer is gone or confused, so stop rather than run more work.
+		if ($available -gt 0) { return $true }
+		return $false
+	} catch {
+		return $true
+	}
+}
+
 $Utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $Utf8
 $OutputEncoding = $Utf8
@@ -117,7 +161,7 @@ function Reset-Runner {
 	}
 }
 
-function Invoke-Payload([string]$Script, [string]$Cwd, [string]$StdinText) {
+function Invoke-Payload([System.IO.Stream]$Stream, [string]$Script, [string]$Cwd, [string]$StdinText) {
 	Reset-Runner
 	$Runner.Commands.Clear()
 	[void]$Runner.Streams.ClearStreams()
@@ -144,7 +188,17 @@ function Invoke-Payload([string]$Script, [string]$Cwd, [string]$StdinText) {
 	$result = $null
 	$parseError = $null
 	try {
-		$result = $Runner.Invoke()
+		$async = $Runner.BeginInvoke()
+		while (-not $async.IsCompleted) {
+			if (Test-ClientGone $Stream) {
+				# The caller cancelled or died. Exit the host process so the
+				# pipeline is torn down instead of completing unseen work.
+				Write-Trace 'client disconnected; aborting execution'
+				exit 0
+			}
+			[void]$async.AsyncWaitHandle.WaitOne(100)
+		}
+		$result = $Runner.EndInvoke($async)
 	} catch {
 		$message = $_.Exception.Message
 		$inner = $_.Exception.InnerException
@@ -266,7 +320,7 @@ function Serve-Connection([System.IO.Stream]$Stream) {
 		}
 
 		try {
-			$outcome = Invoke-Payload ([string]$request.script) ([string]$request.cwd) $stdinText
+			$outcome = Invoke-Payload $Stream ([string]$request.script) ([string]$request.cwd) $stdinText
 		} finally {
 			Restore-BaselineEnv
 		}

@@ -9,7 +9,7 @@ DSH's `ops_bash` runs commands in bash, while `powershell`/`powershell.exe` on W
 1. In the DSH process the plugin points `BASH_ENV` at its own `bash-env.sh` and chains any previous `BASH_ENV`, so other plugins keep working.
 2. The shim reads the original `$BASH_COMMAND` from bash's `DEBUG` trap (before expansion) and only takes over when the command word finally is 5.1; it also exports the list of bash variable names so `$name` ownership can be decided.
 3. `lib/client.js` parses the original text, restores values bash expanded from argv, applies the rewrite rules, and hands the command to the resident host.
-4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** (including `[Console]::Out/Error`), exposes stdin through `[Console]::In`, and derives the exit code from the script's final `$?` like `-Command`. If the host is unavailable while connecting, the original call is used instead; a host failure after the request was sent exits with code 125 and never replays the command, so nothing runs twice.
+4. The resident PowerShell 5.1 host (named pipe, 4-byte little-endian length prefix + JSON frames) runs the command and returns stdout/stderr as **raw bytes** (including `[Console]::Out/Error`), exposes stdin through `[Console]::In`, and derives the exit code from the script's final `$?` like `-Command`. If the host is unavailable while connecting, the original call is used instead; a host failure after the request was sent exits with code 125 and never replays the command, so nothing runs twice. When the client disconnects or `ops_bash` is cancelled, the host notices within 100 ms and exits, so a long-running command does not finish in the background.
 
 ## Ownership
 
@@ -56,6 +56,7 @@ Diagnostics go to `%TEMP%\dsh-ps51-guard-<user>\session-<pid>\diagnostics.log` (
 - stdin is exposed only to `[Console]::In`; native child processes started by the host still get a closed stdin.
 - `[Console]::Out/Error` text is forwarded byte for byte but its order relative to PowerShell pipeline output is approximate (console text comes before the formatted pipeline output).
 - The exit code is the final `$?` of the script; suppressing errors with `-ErrorAction SilentlyContinue` can therefore still yield 0.
+- Cancellation exits the host to stop the pipeline; native child processes started by the script are not guaranteed to be terminated with it.
 
 ## Development
 
