@@ -54,6 +54,9 @@ const previousShim = join(runtime.runtime, 'previous-bash-env.sh');
 writeFileSync(previousShim, 'powershell() { echo function-ok; }\n', 'utf8');
 const loopShim = join(runtime.runtime, 'loop-previous.sh');
 writeFileSync(loopShim, '. "$BASH_ENV"\n', 'utf8');
+const weirdDir = mkdtempSync(join(tmpdir(), 'ps51-pwsh7-$not_defined-`x`-'));
+const weirdPwsh = join(weirdDir, 'pwsh.exe').replace(/\\/g, '/');
+const weirdRuntime = createRuntime({ pwsh7: weirdPwsh, guard: false });
 
 try {
 	test('bare powershell goes to PowerShell 7 by default', () => {
@@ -111,9 +114,17 @@ try {
 		assert.equal(result.code, 0);
 		assert.match(result.stdout, /function/);
 	});
+	test('a pwsh path with shell metacharacters stays literal in the function', () => {
+		const result = runBash('type powershell', { runtime: weirdRuntime });
+		assert.equal(result.code, 0);
+		assert.match(result.stdout, /\$__ps51_pwsh7/);
+		assert.doesNotMatch(result.stderr, /x: command not found/);
+	});
 } finally {
 	runtime.cleanup();
+	weirdRuntime.cleanup();
 	rmSync(wrapperDir, { recursive: true, force: true });
+	rmSync(weirdDir, { recursive: true, force: true });
 }
 
 console.log('pwsh7: ' + passed + '/' + (passed + failures.length) + ' passed');

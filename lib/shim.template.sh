@@ -44,7 +44,7 @@ if [ -n "$__ps51_pwsh7" ] && [ "@@DL@@PS51_PWSH7:-1}" != "0" ]; then
         continue
       fi
     fi
-    eval "$__ps51_word() { @@PWSH7@@ \"\$@\"; }"
+    eval "$__ps51_word() { \"\$__ps51_pwsh7\" \"\$@\"; }"
   done
   unset __ps51_word __ps51_resolved
 fi

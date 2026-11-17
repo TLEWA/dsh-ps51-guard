@@ -55,13 +55,14 @@ TRAP_RAW trap - DEBUG
 
 ## pwsh7 重定向 / Redirect
 
-`test/pwsh7.test.mjs` 在与真实使用相同的 shim 上验证（7/7）：
+`test/pwsh7.test.mjs` 在与真实使用相同的 shim 上验证（8/8）：
 
 - 默认（`PS51_PWSH7` 未设置）`powershell` 与 `powershell.exe` 都执行 PowerShell 7。
 - `PS51_PWSH7=0` 时回到 5.1，并继续由护栏接管。
 - `PATH` 中的包装脚本、以及前一个 `BASH_ENV` 已定义的函数保持所有权，不被覆盖。
 - 重定向生效时 `lib/index.js` 不预热 5.1 宿主；只有关闭重定向或其他模式需要护栏时才启动，避免留下用不到的 `powershell.exe` 进程。
 - 前一个 `BASH_ENV` 如果又 source 回本插件的 shim，`PS51_BASH_ENV_CHAINING` 哨兵会截断循环；该变量不导出，不会传给命令自己的子进程。
+- pwsh 路径包含 `$` 或反引号时，重定向函数仍通过 `__ps51_pwsh7` 变量调用，路径不会被 `eval` 展开或执行。
 
 ## BASH_ENV 竞争与 spawn 注入 / Spawn injection
 
