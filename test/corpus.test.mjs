@@ -34,7 +34,7 @@ const ENCODED = Buffer.from('Write-Output enc-ok', 'utf16le').toString('base64')
  */
 function parseCorpus(text) {
 	const cases = [];
-	for (const block of text.split(/\n---\n/)) {
+	for (const block of text.split(/\r?\n---\r?\n/)) {
 		const lines = block.split(/\r?\n/);
 		const first = lines.find((line) => line.trim().startsWith('#'));
 		if (!first) continue;

@@ -1,21 +1,23 @@
 # dsh-ps51-guard
 
-> 状态：0.1.0，M1–M3 已实现。为通过 `ops_bash` 调用的 **Windows PowerShell 5.1** 提供命令传输保护、语法兼容改写与执行结果归一化。
+> 状态：0.1.0，M1–M5 已实现。为通过 `ops_bash` 调用的 **Windows PowerShell 5.1** 提供命令传输保护、语法兼容改写与执行结果归一化，并内置可关闭的 `powershell → pwsh 7` 重定向。
 
 DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powershell.exe` 是 5.1。命令从模型到 PowerShell 要穿过 bash 的引号与变量展开，5.1 又缺少 PowerShell 7 的语法与编码选项，于是出现「引号被吃掉」「`$env:TEMP` 变成 `:TEMP`」「`2>/dev/null` 报错」「错误退出码为 0」等问题。本插件在 bash 进程内接管最终解析到 5.1 的调用，在命令到达 PowerShell 之前完成纠正。
 
+从 0.2 里程碑起，本插件同时内置原先由 `dsh-pwsh7-bash` 提供的 `powershell → pwsh 7` 重定向，默认开启；需要 5.1 时设 `PS51_PWSH7=0`。迁移后应移除旧插件，避免两个插件争抢 `BASH_ENV`。
+
 ## 工作方式
 
-1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖。
-2. shim 用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 时接管；同时导出 bash 变量名清单，供判断 `$name` 归属。
+1. 插件在 DSH 进程内把 `BASH_ENV` 指向自带的 `bash-env.sh`，并链式加载原有 `BASH_ENV`（若已被其他插件设置），互不覆盖；同时包装 `subprocess.spawn`，在每次 bash 启动时把同一个 shim 注入最终 spawn 环境，并把该环境里原有的 `BASH_ENV` 串到链上。这样即使另一个插件在本插件之后改写进程级 `BASH_ENV`，`ops_bash` 仍会加载本插件，加载顺序不再决定生效与否。
+2. shim 先按 `PS51_PWSH7` 决定是否安装 `powershell → pwsh 7` 函数；默认把解析到 5.1 的 `powershell`/`powershell.exe` 转给 `pwsh`。随后用 bash 的 `DEBUG` trap 读取 `$BASH_COMMAND` 原文（尚未被展开），只在命令词最终是 5.1 且未被重定向时启用 5.1 护栏；同时导出 bash 变量名清单，供判断 `$name` 归属。
 3. `lib/client.js` 解析原文、按 argv 恢复被 bash 展开的值、套用改写规则，然后把命令交给常驻宿主。
 4. 常驻 PowerShell 5.1 宿主（命名管道、4 字节小端长度前缀 + JSON 帧）执行命令；stdout/stderr 以**原始字节**回传（含 `[Console]::Out/Error` 的输出），stdin 通过 `[Console]::In` 提供给脚本，退出码取脚本最后一条命令的 `$?`，与 `-Command` 一致。连接阶段宿主不可用时回退到原始调用；请求已经发出后的宿主故障只报错退出（退出码 125）而不重放，任何情况下都不会执行两次。客户端断开或 `ops_bash` 被取消时，宿主会在 100 毫秒内发现并退出，正在执行的长命令不会在后台继续跑完。
 
 ## 接管范围
 
-- 只接管 `powershell` / `powershell.exe`，且最终解析到的可执行文件是 `%WINDIR%\System32\WindowsPowerShell\v1.0\powershell.exe` 并通过主版本 = 5 校验（校验结果缓存 24 小时）。
-- `pwsh` 直接放行；若命令词已经被其他插件定义为函数（例如 dsh-pwsh7-bash 的 shim），不覆盖。
-- 绝对路径调用（`/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ...`）与 `cmd /c` 内的调用无法拦截，这是路线图记录在案的已知限制。
+- 默认把 `powershell` / `powershell.exe` 重定向到 `pwsh 7`；`PS51_PWSH7=0` 时改为对解析到 5.1 的调用启用护栏。
+- 重定向与护栏都只在命令词最终解析到 5.1（或命令尚不存在）且 `command -v` 结果与已知 5.1 路径一致时安装；`PATH` 中的包装脚本、别名、其他插件或用户已定义的函数不覆盖。
+- `pwsh` 直接放行；绝对路径调用（`/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ...`）与 `cmd /c` 内的调用无法拦截，这是路线图记录在案的已知限制。
 
 ## 规则
 
@@ -38,16 +40,21 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
-| `PS51_GUARD` | `1` | 设为 `0` 完全关闭护栏，恢复原始调用 |
+| `PS51_GUARD` | `1` | 设为 `0` 完全关闭护栏与重定向，恢复原始调用 |
+| `PS51_PWSH7` | `1` | 设为 `0` 关闭 `powershell → pwsh 7` 重定向，保留 5.1 护栏 |
+| `PS51_PWSH7_PATH` | 自动探测 | 指定 `pwsh.exe` 的路径 |
+| `PS51_SPAWN_GUARD` | `1` | 设为 `0` 关闭 `subprocess.spawn` 注入，只保留进程级 `BASH_ENV`（后加载的插件可能覆盖它） |
 | `PS51_MODE` | `rewrite` | `annotate` 只提示不改写；`off` 直接放行 |
 | `PS51_STRICT` | `0` | 设为 `1` 时，命中只提示规则（R7–R10）的命令以退出码 2 拦下 |
 | `PS51_VERBOSE` | `0` | 设为 `1` 时输出全部提示，包括 R8 等低优先级说明 |
 | `PS51_DIAGNOSTICS` | `1` | 设为 `0` 停止写诊断日志 |
 
-诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\session-<pid>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
+`PS51_SPAWN_GUARD` 只影响 `subprocess.spawn` 注入：桥只处理 `bash -c` 或本来就带非空 `BASH_ENV` 的 spawn，调用方显式把 `BASH_ENV` 设为空字符串会被视为主动关闭。`PS51_GUARD`、`PS51_PWSH7` 与 `PS51_SPAWN_GUARD` 都在 DSH 进程启动时读取，修改后需重启 DSH。诊断日志写在 `%TEMP%\dsh-ps51-guard-<用户名>\session-<pid>\diagnostics.log`（JSON 行，含命中的规则与改写前后命令），排查完建议关闭。设置 `PS51_TRACE=1` 可以让宿主额外写 `host-trace.log`。
 
 ## 已知限制
 
+- 重定向在 bash 启动时安装为函数；`command powershell`、绝对路径和 `cmd /c` 不经过重定向，仍会执行 5.1（也不经过护栏）。
+- 重定向开关在 DSH 启动时读取；shell 启动后已安装的函数不会因单条命令前缀 `PS51_PWSH7=0` 而改变。需要 5.1 时请在启动 DSH 前设置并重启。
 - 只处理 `-Command` / `-c` 载荷；`-File` 与 `-EncodedCommand` 原样放行，不做改写。
 - 含 `exit` 关键字的脚本走一次性进程（约 0.3–0.5 秒），因为 runspace 拿不到 `exit` 的退出码。
 - 每条命令要启动一次 `node` 客户端；宿主复用后同会话均摊约 100 毫秒/条，仍高于裸 5.1 的热执行。
@@ -57,6 +64,8 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - `[Console]::Out/Error` 按原始字节单独回传，与 PowerShell pipeline 输出的相对顺序是近似的（console 文本先于格式化后的 pipeline 输出）。
 - 退出码取脚本最后一条命令的 `$?`；`-ErrorAction SilentlyContinue` 之类吞掉错误时，即使有错误也可能返回 0。
 - 取消时宿主直接退出以停止 pipeline；由脚本启动的原生子进程不保证一并终止。
+- spawn 注入只包一层；若另一个插件在本插件之后再次包装 `subprocess.spawn` 并丢弃或重写最终 spec，或整体替换 subprocess 服务，注入可能失效。桥不会为了实现注入而改变原命令；可用 `PS51_SPAWN_GUARD=0` 关闭它。
+- 调用方显式把 spawn 的 `BASH_ENV` 设为空字符串时，桥尊重该选择，不再注入。
 
 ## 开发
 
