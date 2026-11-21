@@ -86,6 +86,7 @@ Tests cover the rewrite rules, 33 real command corpus cases executed end-to-end 
 - [dsh-sidebar-row-menu](https://github.com/TLEWA/dsh-sidebar-row-menu) — sidebar context menus and open-with actions
 - [dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output) — fix GBK/CP936 mojibake from Windows subprocesses
 - [dsh-ptc-noargs](https://github.com/TLEWA/dsh-ptc-noargs) — normalize no-argument tool calls in PTC `run_code`
+- [dsh-image-formats](https://github.com/TLEWA/dsh-image-formats) — AVIF/TIFF/SVG support for `read_image` and the composer
 
 ## License
 

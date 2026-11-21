@@ -86,6 +86,7 @@ npx --yes --package=github:TLEWA/dsh-plugin-ci#v1 dsh-ci-gate
 - [dsh-sidebar-row-menu](https://github.com/TLEWA/dsh-sidebar-row-menu) — 侧栏右键菜单与打开方式
 - [dsh-utf8-output](https://github.com/TLEWA/dsh-utf8-output) — Windows 子进程 GBK/CP936 乱码修复
 - [dsh-ptc-noargs](https://github.com/TLEWA/dsh-ptc-noargs) — PTC `run_code` 无参工具调用归一化
+- [dsh-image-formats](https://github.com/TLEWA/dsh-image-formats) — 让 `read_image` 与 composer 支持 AVIF/TIFF/SVG
 
 ## 许可
 
