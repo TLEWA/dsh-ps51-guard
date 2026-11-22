@@ -86,6 +86,7 @@ TRAP_RAW trap - DEBUG
 ## 取消 / Cancellation
 
 宿主在脚本执行期间每 100 ms 用 `PeekNamedPipe` 检查调用方管道；客户端断开（包括 `ops_bash` 取消）时直接退出宿主进程，正在执行的 pipeline 随进程终止，不会在后台继续。`test/host.test.mjs` 用 `Start-Sleep -Seconds 5; Write-Output should-not-run` 验证宿主在 3 秒内退出且 trace 中没有完成记录。
+客户端据此把取消与普通失败分开报告：`lib/cancellation.js` 同时接受 rc.5 的 `AbortError` / `ABORT_ERR` 与新版 `dsh-tools` 的 `ABORTED`、`ABORTED_BEFORE_DISPATCH`（含 `error.info` 包裹），前者写 `[ps51] cancelled …`，后者保留 `[ps51] resident host failed …`；两条路径都退出 125 且都不重放命令。
 
 ## 输出编码 / Output encoding
 

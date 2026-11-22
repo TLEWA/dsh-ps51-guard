@@ -2,6 +2,14 @@
 
 本项目的重要变更都记录在这里，中英两版同步维护。
 
+## [Unreleased]
+
+### 修复
+
+- 取消识别同时接受新旧两代宿主的取消码，且不判断宿主版本。rc.5 把中止报告为 `AbortError`；alpha 的 `dsh-tools` 把「调用方已中止、错误本身未被分类」的失败改标为 `{ name: 'AbortError', code: state.bodyInvoked ? 'ABORTED' : 'ABORTED_BEFORE_DISPATCH' }`（`dsh-tools/src/pipeline.ts:335,339-345`，错误体把这对值放在 `error.info` 里）。新增 `lib/cancellation.js` 按名字/码集合匹配：`ABORT_ERR`、`ABORTED`、`ABORTED_BEFORE_DISPATCH` 与 `AbortError` 名（含 `error.info` 包裹形状）都归为取消，匹配顺序为自身 `code` → `info.code` → 自身 `name` → `info.name` → `signal.aborted`，大小写不敏感但只认已知值。
+- 只放宽匹配，不改分支语义：取消仍以退出码 125 结束、仍不重放命令、仍不回退到原命令；`lib/client.js` 只是把诊断 `kind` 分成 `host-cancelled` 与 `host-failed`，前者文案为 `[ps51] cancelled while the resident host was running; …`，后者的文案与 rc.5 逐字相同（`[ps51] resident host failed after the command was sent and was not retried: …`）。`main()` 的内部错误出口同样区分取消与内部错误，退出码保持 1。
+- 新增 `lib/cancellation.js` 与 `test/cancellation.test.mjs`（7 条：三个取消码走取消路径、rc.5 形状保持、普通失败仍按失败、非 Error 值不抛异常、大小写与已知值边界、假宿主下普通失败仍退出 125 且不重放），并在 `npm test`、`npm run check` 中接入。
+
 ## 0.1.0 - 2026-11-16
 
 ### 新增

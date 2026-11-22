@@ -66,6 +66,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - 取消时宿主直接退出以停止 pipeline；由脚本启动的原生子进程不保证一并终止。
 - spawn 注入只包一层；若另一个插件在本插件之后再次包装 `subprocess.spawn` 并丢弃或重写最终 spec，或整体替换 subprocess 服务，注入可能失效。桥不会为了实现注入而改变原命令；可用 `PS51_SPAWN_GUARD=0` 关闭它。
 - 调用方显式把 spawn 的 `BASH_ENV` 设为空字符串时，桥尊重该选择，不再注入。
+- 取消按错误名与错误码识别，不判断宿主版本：rc.5 的 `AbortError` / `ABORT_ERR` 与新版的 `ABORTED`、`ABORTED_BEFORE_DISPATCH`（含 `error.info` 包裹形状）都归为取消，文案为 `[ps51] cancelled while the resident host was running; …`；两者仍然不重放命令、退出码 125。
 
 ## 开发
 

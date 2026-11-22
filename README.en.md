@@ -66,6 +66,7 @@ Whenever a rewrite happens, `[ps51] A → B` is printed to stderr so the model k
 - Cancellation exits the host to stop the pipeline; native child processes started by the script are not guaranteed to be terminated with it.
 - The spawn injection is one wrapper deep; if another plugin later wraps `subprocess.spawn` again and drops or rewrites the final spec, or replaces the subprocess service entirely, the injection may stop working. The bridge never changes the original command to win; set `PS51_SPAWN_GUARD=0` to turn it off.
 - An explicit empty `BASH_ENV` on a spawn is respected as an opt-out and receives no injection.
+- Cancellation is recognised by error name and code rather than by host version: rc.5's `AbortError` / `ABORT_ERR` and the newer `ABORTED` / `ABORTED_BEFORE_DISPATCH` (including the `error.info` wrapping) all count as a cancellation and print `[ps51] cancelled while the resident host was running; …`; both still skip the replay and exit with code 125.
 
 ## Development
 

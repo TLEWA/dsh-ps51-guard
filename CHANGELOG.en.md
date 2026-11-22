@@ -2,6 +2,14 @@
 
 Notable changes to this project are recorded here, kept in sync across both languages.
 
+## [Unreleased]
+
+### Fixed
+
+- Cancellation is now recognised across both host generations without a version check. rc.5 reports an abort as `AbortError`; alpha's `dsh-tools` relabels a failure thrown while the caller is aborting and the error itself is unclassified as `{ name: 'AbortError', code: state.bodyInvoked ? 'ABORTED' : 'ABORTED_BEFORE_DISPATCH' }` (`dsh-tools/src/pipeline.ts:335,339-345`, with the pair carried under `error.info`). New `lib/cancellation.js` matches by name and code set: `ABORT_ERR`, `ABORTED`, `ABORTED_BEFORE_DISPATCH` and the `AbortError` name — including the `error.info` wrapping — all count as cancellations, probing own `code` → `info.code` → own `name` → `info.name` → `signal.aborted`, case-insensitively but only against known values.
+- The match is only widened; no branch changes meaning: a cancellation still exits with code 125, still never replays the command and still never falls back to the original call. `lib/client.js` only splits the diagnostics `kind` into `host-cancelled` and `host-failed`; the former prints `[ps51] cancelled while the resident host was running; …`, the latter keeps rc.5's wording byte for byte (`[ps51] resident host failed after the command was sent and was not retried: …`). The internal error exit of `main()` distinguishes a cancellation from an internal error too, and keeps exit code 1.
+- Added `lib/cancellation.js` and `test/cancellation.test.mjs` (7 cases: all three cancellation codes take the cancellation path, rc.5 shapes preserved, ordinary failures stay failures, non-Error values never throw, case and known-value boundaries, and a plain failure after send still exits 125 without a replay), wired into `npm test` and `npm run check`.
+
 ## 0.1.0 - 2026-11-16
 
 ### Added
