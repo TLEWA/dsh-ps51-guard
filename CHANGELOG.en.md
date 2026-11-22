@@ -2,6 +2,15 @@
 
 Notable changes to this project are recorded here, kept in sync across both languages.
 
+## [Unreleased]
+
+### Fixed
+
+- Cancellation is now recognised across both host generations without a version check. rc.5 reports an abort as `AbortError`; alpha's `dsh-tools` relabels a failure thrown while the caller is aborting and the error itself is unclassified as `{ name: 'AbortError', code: state.bodyInvoked ? 'ABORTED' : 'ABORTED_BEFORE_DISPATCH' }` (`dsh-tools/src/pipeline.ts:335,339-345`, with the pair carried under `error.info`). New `lib/cancellation.js` matches by name and code set: `ABORT_ERR`, `ABORTED`, `ABORTED_BEFORE_DISPATCH` and the `AbortError` name — including the `error.info` wrapping — all count as cancellations, probing own `code` → `info.code` → own `name` → `info.name` → the `cause` chain (up to four links) → `signal.reason` → `signal.aborted`, case-insensitively but only against known values.
+- The match is only widened; no branch changes meaning: a cancellation still exits with code 125, still never replays the command and still never falls back to the original call. `lib/client.js` only splits the diagnostics `kind` into `host-cancelled` and `host-failed`; the former prints `[ps51] cancelled while the resident host was running; …`, the latter keeps rc.5's wording byte for byte (`[ps51] resident host failed after the command was sent and was not retried: …`). The internal error exit of `main()` distinguishes a cancellation from an internal error too, and keeps exit code 1.
+- Cancellation reachability is now stated instead of implied: the `ABORTED` codes are created inside the DSH process, and a real `ops_bash` cancellation on Windows terminates the whole bash job with `TerminateJobObject` (`dsh-subprocess-local/lib/runner.js:280`), so this client cannot run a reporting line, prints no `[ps51] cancelled` and writes no diagnostic -- DSH reports that cancellation itself and the host stops the pipeline when the client disconnects (`host/ps51-host.ps1`). The widening is defensive: when an error object really does arrive with a cancellation shape (including the `cause` chain and `signal.reason`), it takes the cancellation branch instead of being misreported as a host failure; transport, frame and spawn failures still record `host-failed`.
+- Tests grew to 10: two unit groups for the transport/frame shapes the client actually catches and for the `cause` chain and `signal.reason`, plus an end-to-end case where a real host and a real client are run and the client's process tree is terminated -- the host stops and the command is never replayed. Wired into `npm test` and `npm run check`.
+
 ## 0.1.0 - 2026-11-16
 
 ### Added

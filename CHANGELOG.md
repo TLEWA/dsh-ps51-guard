@@ -2,6 +2,15 @@
 
 本项目的重要变更都记录在这里，中英两版同步维护。
 
+## [Unreleased]
+
+### 修复
+
+- 取消识别同时接受新旧两代宿主的取消码，且不判断宿主版本。rc.5 把中止报告为 `AbortError`；alpha 的 `dsh-tools` 把「调用方已中止、错误本身未被分类」的失败改标为 `{ name: 'AbortError', code: state.bodyInvoked ? 'ABORTED' : 'ABORTED_BEFORE_DISPATCH' }`（`dsh-tools/src/pipeline.ts:335,339-345`，错误体把这对值放在 `error.info` 里）。新增 `lib/cancellation.js` 按名字/码集合匹配：`ABORT_ERR`、`ABORTED`、`ABORTED_BEFORE_DISPATCH` 与 `AbortError` 名（含 `error.info` 包裹形状）都归为取消，匹配顺序为自身 `code` → `info.code` → 自身 `name` → `info.name` → `cause` 链（最多 4 层）→ `signal.reason` → `signal.aborted`，大小写不敏感但只认已知值。
+- 只放宽匹配，不改分支语义：取消仍以退出码 125 结束、仍不重放命令、仍不回退到原命令；`lib/client.js` 只是把诊断 `kind` 分成 `host-cancelled` 与 `host-failed`，前者文案为 `[ps51] cancelled while the resident host was running; …`，后者的文案与 rc.5 逐字相同（`[ps51] resident host failed after the command was sent and was not retried: …`）。`main()` 的内部错误出口同样区分取消与内部错误，退出码保持 1。
+- 明确取消码的可达范围：`ABORTED` 系列码只在 DSH 主进程里生成，而 Windows 上的真实 `ops_bash` 取消以 `TerminateJobObject` 终止整棵 bash 作业（`dsh-subprocess-local/lib/runner.js:280`），本插件客户端没有机会执行上报代码，因此不会打印 `[ps51] cancelled`、也不会写诊断——真实取消由 DSH 自己报告，宿主在客户端断开时停止 pipeline（`host/ps51-host.ps1`）。这次放宽是防御性的：一旦错误对象真的带着取消形状到达客户端（包括 `cause` 链与 `signal.reason`），它会走取消分支而不是被误报成宿主失败；传输/帧/启动失败仍记为 `host-failed`。
+- 测试扩到 10 条：新增「客户端真实捕获的传输/帧错误形状」「`cause` 链与 `signal.reason`」两组单测，以及「真宿主 + 真客户端进程树被整树终止时宿主停止、命令不重放」的端到端用例；`npm test`、`npm run check` 均已接入。
+
 ## 0.1.0 - 2026-11-16
 
 ### 新增
