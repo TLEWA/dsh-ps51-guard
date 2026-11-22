@@ -9,8 +9,9 @@
  */
 
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -201,3 +202,137 @@ test('a plain failure after send still exits 125 and is never retried', { skip: 
 		rmSync(runtime, { recursive: true, force: true });
 	}
 });
+
+test('classifies the real error objects the client actually catches', () => {
+	const transport = [
+		new Error('host closed the connection before the exit frame'),
+		Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', errno: -4077, syscall: 'read' }),
+		Object.assign(new Error('write EPIPE'), { code: 'EPIPE', errno: -4047, syscall: 'write' }),
+		Object.assign(new Error('connect ENOENT'), { code: 'ENOENT', errno: -4058, syscall: 'connect' }),
+		new RangeError('frame body of 1048577 bytes exceeds the 1048576 byte limit'),
+	];
+	for (const error of transport) {
+		const info = cancellationOf(error);
+		assert.equal(info.cancelled, false, error.message + ' must stay a host failure');
+		assert.equal(info.matchedBy, 'none', error.message);
+	}
+
+	// The shapes a caller can really hand over: rc.5's AbortError with its code,
+	// alpha's info-wrapped pair, and the DOMException Node uses as an abort reason.
+	const rc5 = Object.assign(new Error('The operation was aborted'), { name: 'AbortError', code: 'ABORT_ERR' });
+	assert.equal(cancellationOf(rc5).matchedBy, 'code');
+
+	const alpha = Object.assign(new Error('tool call aborted'), { info: { name: 'AbortError', code: 'ABORTED' } });
+	assert.equal(cancellationOf(alpha).matchedBy, 'info.code');
+
+	const dom = new DOMException('This operation was aborted', 'AbortError');
+	assert.equal(cancellationOf(dom).cancelled, true);
+	assert.equal(cancellationOf(dom).matchedBy, 'name');
+});
+
+test('follows a wrapped cause and an abort signal reason', () => {
+	const wrapped = new Error('request failed', { cause: new DOMException('This operation was aborted', 'AbortError') });
+	const info = cancellationOf(wrapped);
+	assert.equal(info.cancelled, true);
+	assert.equal(info.matchedBy, 'cause.name');
+	assert.equal(info.message, 'request failed', 'the outer message is what gets reported');
+
+	const alphaCause = new Error('pipeline failed', {
+		cause: { message: 'aborted', info: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' } },
+	});
+	assert.equal(cancellationOf(alphaCause).matchedBy, 'cause.info.code');
+
+	const deep = new Error('outer', { cause: new Error('inner', { cause: { code: 'ABORT_ERR' } }) });
+	assert.equal(cancellationOf(deep).matchedBy, 'cause.code');
+
+	const controller = new AbortController();
+	controller.abort();
+	const withReason = Object.assign(new Error('request failed'), { signal: controller.signal });
+	assert.equal(cancellationOf(withReason).matchedBy, 'signal.reason');
+
+	const idle = Object.assign(new Error('request failed'), { signal: new AbortController().signal });
+	assert.equal(cancellationOf(idle).cancelled, false);
+
+	const cyclic = new Error('loop');
+	cyclic.cause = cyclic;
+	assert.doesNotThrow(() => cancellationOf(cyclic));
+	assert.equal(cancellationOf(cyclic).cancelled, false);
+	assert.equal(cancellationOf(new Error('text cause', { cause: 'not an error' })).cancelled, false);
+});
+
+test('a real process-tree cancellation stops the host and never replays the command', { skip: process.platform !== 'win32' }, async () => {
+	// DSH cancels ops_bash by terminating the whole bash job, so the client is
+	// killed before it can report anything. Run the real client against a real
+	// host, kill the client's tree, and pin the guarantees that still hold: the
+	// host stops the pipeline on disconnect and no second execution starts.
+	const pipe = 'ps51-cancel-real-' + process.pid + '-' + Math.random().toString(16).slice(2, 8);
+	const runtime = mkdtempSync(join(tmpdir(), 'ps51-cancel-real-'));
+	const toSlashes = (value) => value.split(String.fromCharCode(92)).join('/');
+	const started = toSlashes(join(runtime, 'started.txt'));
+	const finished = toSlashes(join(runtime, 'finished.txt'));
+	const hostScript = join(ROOT, 'host', 'ps51-host.ps1');
+	const script =
+		"Add-Content -LiteralPath '" + started + "' -Value started; Start-Sleep -Seconds 10; " +
+		"Add-Content -LiteralPath '" + finished + "' -Value finished";
+	const host = spawn(EXECUTABLE, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', hostScript, '-PipeName', pipe], {
+		stdio: 'ignore',
+		windowsHide: true,
+		env: { ...process.env, PS51_RUNTIME: runtime, PS51_TRACE: '1' },
+	});
+	let client = null;
+	try {
+		await waitForTrace(runtime, 'listening', 20000);
+		client = spawn(process.execPath, [join(ROOT, 'lib', 'client.js'), 'powershell.exe', '-NoProfile', '-Command', script], {
+			env: {
+				...process.env,
+				PS51_RAW: 'powershell.exe -NoProfile -Command "' + script + '"',
+				PS51_EXE: EXECUTABLE,
+				PS51_HOST_SCRIPT: hostScript,
+				PS51_RUNTIME: runtime,
+				PS51_PIPE: pipe,
+				PS51_DIAGNOSTICS: '1',
+			},
+			stdio: ['ignore', 'pipe', 'pipe'],
+			windowsHide: true,
+		});
+		assert.ok(client.pid, 'the client must start');
+		await waitForFile(started, 20000);
+		spawnSync('taskkill', ['/PID', String(client.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+		const exited = host.exitCode !== null ? Promise.resolve(true) : once(host, 'exit').then(() => true);
+		const stopped = await Promise.race([exited, delay(5000).then(() => false)]);
+		assert.equal(stopped, true, 'the host kept running after the client tree was terminated');
+		await delay(1000);
+		assert.equal(existsSync(finished), false, 'the cancelled script must not run to completion');
+		const written = readFileSync(started, 'utf8').trim().split(String.fromCharCode(10)).filter((line) => line.length > 0);
+		assert.equal(written.length, 1, 'the command must not be replayed after the cancellation');
+		const trace = readFileSync(join(runtime, 'host-trace.log'), 'utf8');
+		assert.match(trace, /client disconnected; aborting execution/);
+	} finally {
+		if (client !== null && client.exitCode === null) client.kill();
+		host.kill();
+		rmSync(runtime, { recursive: true, force: true });
+	}
+});
+
+async function waitForFile(path, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (existsSync(path)) return;
+		await delay(50);
+	}
+	throw new Error('the command never started: ' + path);
+}
+
+async function waitForTrace(runtime, needle, timeoutMs) {
+	const file = join(runtime, 'host-trace.log');
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (existsSync(file) && readFileSync(file, 'utf8').includes(needle)) return;
+		await delay(50);
+	}
+	throw new Error('the host never wrote ' + needle);
+}
+
+function delay(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}

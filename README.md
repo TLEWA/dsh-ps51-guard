@@ -66,7 +66,7 @@ DSH 的 `ops_bash` 用 bash 执行命令，而 Windows 上的 `powershell`/`powe
 - 取消时宿主直接退出以停止 pipeline；由脚本启动的原生子进程不保证一并终止。
 - spawn 注入只包一层；若另一个插件在本插件之后再次包装 `subprocess.spawn` 并丢弃或重写最终 spec，或整体替换 subprocess 服务，注入可能失效。桥不会为了实现注入而改变原命令；可用 `PS51_SPAWN_GUARD=0` 关闭它。
 - 调用方显式把 spawn 的 `BASH_ENV` 设为空字符串时，桥尊重该选择，不再注入。
-- 取消按错误名与错误码识别，不判断宿主版本：rc.5 的 `AbortError` / `ABORT_ERR` 与新版的 `ABORTED`、`ABORTED_BEFORE_DISPATCH`（含 `error.info` 包裹形状）都归为取消，文案为 `[ps51] cancelled while the resident host was running; …`；两者仍然不重放命令、退出码 125。
+- 取消的可达范围要分清：真实 `ops_bash` 取消在 Windows 上由 DSH 直接终止整棵 bash 作业（`dsh-subprocess-local/lib/runner.js:280` 的 `terminateJob` → TerminateJobObject），本插件客户端没有机会执行上报代码，因此不会打印 `[ps51] cancelled`、也不会写诊断——这类取消由 DSH 自己报告，宿主在客户端断开时停止 pipeline。客户端只分类它实际捕获到的错误对象：传输/帧/启动失败仍报 `[ps51] resident host failed …`；只有错误体本身带取消形状（rc.5 的 `AbortError` / `ABORT_ERR`，或 `ABORTED`、`ABORTED_BEFORE_DISPATCH`，含 `error.info`、`cause` 链与 `signal.reason`）时才改报 `[ps51] cancelled while the resident host was running; …`。两条路径都不重放命令、退出码 125。
 
 ## 开发
 
